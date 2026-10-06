@@ -1,0 +1,35 @@
+{
+  "default_model": "gemma4-e4b",
+  "providers": {
+    "ollama": {
+      "base_url_env": "OLLAMA_BASE_URL",
+      "api_key_env": "OLLAMA_API_KEY"
+    },
+    "llamacpp": {
+      "base_url_env": "LLAMACPP_BASE_URL",
+      "api_key_env": "LLAMACPP_API_KEY"
+    }
+  },
+  "models": [
+    {
+      "id": "gemma4-e4b",
+      "label": "Gemma 4 E4B",
+      "description": "Google Gemma 4 (effective 4B). Default for general chat.",
+      "provider": "ollama",
+      "provider_model": "gemma4:e4b",
+      "system_prompt": "You are a helpful, concise assistant.",
+      "temperature": 0.7,
+      "max_tokens": 1024
+    },
+    {
+      "id": "nemotron-nano-4b",
+      "label": "Nemotron 3 Nano 4B",
+      "description": "NVIDIA Nemotron 3 Nano 4B. Good for coding and step-by-step reasoning.",
+      "provider": "ollama",
+      "provider_model": "nemotron-3-nano:4b",
+      "system_prompt": "You are a precise assistant for programming and reasoning tasks. Put code in fenced blocks.",
+      "temperature": 0.6,
+      "max_tokens": 2048
+    }
+  ]
+}

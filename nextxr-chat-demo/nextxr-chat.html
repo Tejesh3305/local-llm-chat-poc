@@ -1,0 +1,1637 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NextXR Local AI Chat</title>
+<!--
+  NextXR local chatbot demo. One self-contained file: no CDN scripts, fonts or analytics.
+  Open it in Chrome or Edge. To connect the models, edit the CONFIG block at the top of the script.
+-->
+<script>
+  try {
+    var savedTheme = JSON.parse(localStorage.getItem('nextxr-chat-demo') || '{}').theme;
+    if (savedTheme) document.documentElement.dataset.theme = savedTheme;
+  } catch (e) {}
+</script>
+<style>
+  :root {
+    --bg: #f6f8f7;
+    --surface: #ffffff;
+    --surface-2: #edf1ef;
+    --ink: #111a16;
+    --ink-2: #44524c;
+    --ink-3: #6b7872;
+    --line: #dfe5e2;
+    --line-strong: #c8d1cd;
+    --brand: #1d5c49;
+    --brand-hover: #174a3b;
+    --on-brand: #ffffff;
+    --user-bg: #e4ede9;
+    --code-bg: #f0f3f2;
+    --ok: #1f9d6b;
+    --busy: #d08a12;
+    --danger: #b3261e;
+    --danger-bg: #fdecea;
+    --warn: #7a5200;
+    --warn-bg: #fff3d2;
+    --info: #1f4fa3;
+    --info-bg: #e8effc;
+    --teal: #0d7a6c;
+    --violet: #6a48d7;
+    --amber: #b45309;
+    --blue: #1d5fd1;
+    --shadow: 0 1px 2px rgba(16, 24, 20, .06), 0 10px 28px rgba(16, 24, 20, .10);
+    --radius: 14px;
+    --column: 52rem;
+    --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Nirmala UI", "Noto Sans Devanagari", sans-serif;
+    --mono: Consolas, "Cascadia Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    color-scheme: light;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0e1311;
+    --surface: #161c19;
+    --surface-2: #1e2622;
+    --ink: #e9f0ec;
+    --ink-2: #b4c0ba;
+    --ink-3: #8a9791;
+    --line: #262f2b;
+    --line-strong: #36423c;
+    --brand: #3fae8a;
+    --brand-hover: #56c39e;
+    --on-brand: #06130e;
+    --user-bg: #202b26;
+    --code-bg: #111715;
+    --ok: #3ecf8e;
+    --busy: #f0b545;
+    --danger: #ff8a80;
+    --danger-bg: #3a1715;
+    --warn: #f2c15b;
+    --warn-bg: #33280c;
+    --info: #9dbdf7;
+    --info-bg: #15223b;
+    --teal: #45c7b4;
+    --violet: #a892ff;
+    --amber: #f0a55a;
+    --blue: #7fb0ff;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 12px 32px rgba(0, 0, 0, .5);
+    color-scheme: dark;
+  }
+  [data-accent="teal"] { --accent: var(--teal); }
+  [data-accent="violet"] { --accent: var(--violet); }
+  [data-accent="amber"] { --accent: var(--amber); }
+  [data-accent="blue"] { --accent: var(--blue); }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html { font-size: 17px; }
+  @media (min-width: 1700px) { html { font-size: 19px; } }
+  body {
+    margin: 0;
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  button, textarea, input, select { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  svg { flex: none; }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+  .app { display: flex; flex-direction: column; height: 100%; }
+
+  /* ---------- top bar ---------- */
+  .topbar {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 1rem;
+    padding: .65rem 1.25rem;
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { display: flex; align-items: baseline; gap: .7rem; min-width: 0; }
+  .brand-logo { height: 1.6rem; align-self: center; }
+  .brand-name { font-size: 1.25rem; font-weight: 700; letter-spacing: -.015em; color: var(--brand); }
+  .brand-tag { color: var(--ink-3); font-size: .85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .top-actions { display: flex; justify-content: flex-end; align-items: center; gap: .4rem; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: .45rem;
+    padding: .45rem .85rem;
+    border: 1px solid var(--line-strong); border-radius: 999px;
+    background: var(--surface);
+    font-weight: 550; font-size: .92rem; white-space: nowrap;
+    transition: background .15s, border-color .15s, transform .1s;
+  }
+  .btn:hover { background: var(--surface-2); }
+  .btn:active { transform: scale(.97); }
+  .btn.primary { background: var(--brand); border-color: var(--brand); color: var(--on-brand); }
+  .btn.primary:hover { background: var(--brand-hover); border-color: var(--brand-hover); }
+  .btn.small { padding: .25rem .7rem; font-size: .85rem; }
+  .icon-btn {
+    display: grid; place-items: center; width: 2.3rem; height: 2.3rem;
+    border: 0; border-radius: 50%; background: none; color: var(--ink-2); font-size: 1.15rem;
+    transition: background .15s, color .15s;
+  }
+  .icon-btn:hover { background: var(--surface-2); color: var(--ink); }
+  .ghost {
+    display: inline-flex; align-items: center; gap: .3rem;
+    padding: .2rem .5rem; border: 0; border-radius: 8px; background: none;
+    color: var(--ink-3); font-size: .82rem;
+    transition: background .15s, color .15s;
+  }
+  .ghost:hover { background: var(--surface-2); color: var(--ink); }
+
+  /* ---------- model picker ---------- */
+  .picker { position: relative; }
+  .pick {
+    display: inline-flex; align-items: center; gap: .55rem;
+    padding: .45rem .75rem .45rem .85rem;
+    border: 1px solid var(--line-strong); border-radius: 999px;
+    background: var(--surface);
+    transition: border-color .15s, background .15s, box-shadow .15s;
+  }
+  .pick:hover { background: var(--surface-2); }
+  .pick[aria-expanded="true"] { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+  .pick-name { font-weight: 650; }
+  .pick-vendor { color: var(--ink-3); font-size: .88rem; }
+  .pick svg { color: var(--ink-3); transition: transform .18s; }
+  .pick[aria-expanded="true"] svg { transform: rotate(180deg); }
+  .dot { width: .62rem; height: .62rem; border-radius: 50%; background: var(--accent, var(--ink-3)); flex: none; transition: background .2s; }
+
+  .menu {
+    position: absolute; top: calc(100% + .5rem); left: 50%; z-index: 20;
+    width: max-content; min-width: 22rem; max-width: calc(100vw - 2rem);
+    padding: .35rem;
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    transform: translateX(-50%);
+    animation: pop .15s ease-out;
+  }
+  @keyframes pop { from { opacity: 0; transform: translateX(-50%) translateY(-6px); } }
+  .opt {
+    display: flex; align-items: center; gap: .75rem; width: 100%;
+    padding: .6rem .75rem; border: 0; border-radius: 10px; background: none; text-align: left;
+    transition: background .12s;
+  }
+  .opt:hover, .opt:focus-visible { background: var(--surface-2); outline: none; }
+  .opt-text { display: grid; flex: 1; min-width: 0; line-height: 1.35; }
+  .opt-name { font-weight: 620; }
+  .opt-sub { color: var(--ink-3); font-size: .8rem; }
+  .opt-state { color: var(--ink-3); font-size: .78rem; white-space: nowrap; }
+  .opt-state[data-kind="warn"] { color: var(--warn); font-weight: 600; }
+  .opt-check { color: var(--accent); font-size: 1.1rem; visibility: hidden; display: grid; }
+  .opt[aria-selected="true"] .opt-check { visibility: visible; }
+
+  /* ---------- banner ---------- */
+  .banner {
+    display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: .4rem .9rem;
+    padding: .55rem 1.25rem; font-size: .93rem; font-weight: 550;
+    animation: slide .2s ease-out;
+  }
+  @keyframes slide { from { opacity: 0; transform: translateY(-4px); } }
+  .banner[data-kind="danger"] { background: var(--danger-bg); color: var(--danger); }
+  .banner[data-kind="warn"] { background: var(--warn-bg); color: var(--warn); }
+  .banner[data-kind="info"] { background: var(--info-bg); color: var(--info); }
+  .banner code { font-family: var(--mono); font-size: .9em; padding: .1em .45em; border-radius: 6px; background: color-mix(in srgb, currentColor 12%, transparent); }
+  .banner .btn { border-color: currentColor; background: transparent; color: inherit; }
+  .banner .btn:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
+
+  /* ---------- conversation ---------- */
+  .scroller {
+    display: flex; flex-direction: column; flex: 1; min-height: 0;
+    overflow-y: auto; overscroll-behavior: contain;
+    scrollbar-gutter: stable both-edges;
+  }
+  body { scrollbar-color: var(--line-strong) transparent; }
+  .scroller, .code pre, .table-wrap, .composer textarea { scrollbar-width: thin; }
+  .thread { display: flex; flex-direction: column; gap: 1.5rem; width: 100%; max-width: var(--column); margin: 0 auto; padding: 1.75rem 1.25rem 1.25rem; }
+  .msg { animation: rise .26s cubic-bezier(.2, .7, .2, 1) both; }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+
+  .msg.user { align-self: flex-end; max-width: min(82%, 38rem); }
+  .bubble { padding: .65rem 1.05rem; border-radius: 20px 20px 6px 20px; background: var(--user-bg); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+  .who { display: flex; align-items: center; gap: .5rem; margin-bottom: .3rem; font-size: .92rem; }
+  .who-name { font-weight: 680; color: var(--accent); }
+  .who-vendor { color: var(--ink-3); }
+
+  .wait { display: flex; align-items: baseline; gap: .6rem; }
+  .shimmer {
+    background: linear-gradient(90deg, var(--ink-3) 0%, var(--ink-3) 35%, var(--ink) 50%, var(--ink-3) 65%, var(--ink-3) 100%) 0 0 / 250% 100%;
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    animation: shimmer 1.8s linear infinite;
+  }
+  @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -66% 0; } }
+  .wait-time { color: var(--ink-3); font-size: .85rem; font-variant-numeric: tabular-nums; }
+
+  .md { overflow-wrap: anywhere; }
+  .md > * { margin: 0 0 .8em; }
+  .md > :last-child { margin-bottom: 0; }
+  .md h3, .md h4, .md h5 { margin-top: 1.1em; line-height: 1.3; font-weight: 680; letter-spacing: -.01em; }
+  .md > :first-child { margin-top: 0; }
+  .md h3 { font-size: 1.2rem; }
+  .md h4 { font-size: 1.08rem; }
+  .md h5 { font-size: 1rem; }
+  .md ul, .md ol { padding-left: 1.5em; }
+  .md li { margin: .25em 0; }
+  .md li > ul, .md li > ol { margin: .25em 0; }
+  .md li > p { margin: .45em 0 0; }
+  .md li > .code { margin: .5em 0; }
+  .md li::marker { color: var(--ink-3); }
+  .md strong { font-weight: 680; }
+  .md code { font-family: var(--mono); font-size: .88em; padding: .12em .38em; border-radius: 6px; background: var(--code-bg); border: 1px solid var(--line); }
+  .md .link { text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+  .md blockquote { padding: .1em 0 .1em 1em; border-left: 3px solid var(--line-strong); color: var(--ink-2); }
+  .md blockquote > * { margin: 0 0 .5em; }
+  .md blockquote > :last-child { margin-bottom: 0; }
+  .md hr { border: 0; border-top: 1px solid var(--line); margin: 1.2em 0; }
+  .code { border: 1px solid var(--line); border-radius: 12px; background: var(--code-bg); overflow: hidden; }
+  .code-head { display: flex; align-items: center; justify-content: space-between; padding: .2rem .4rem .2rem .9rem; border-bottom: 1px solid var(--line); color: var(--ink-3); font-size: .78rem; font-family: var(--mono); }
+  .code pre { margin: 0; padding: .8rem .95rem; overflow-x: auto; }
+  .code pre code { padding: 0; border: 0; background: none; font-size: .86rem; line-height: 1.55; white-space: pre; }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
+  .table-wrap table { width: 100%; border-collapse: collapse; font-size: .93rem; }
+  .table-wrap th, .table-wrap td { padding: .5rem .8rem; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .table-wrap th { background: var(--surface-2); font-weight: 650; }
+  .table-wrap tr:last-child td { border-bottom: 0; }
+
+  /* caret at the end of a reply while it streams */
+  .msg[data-status="streaming"] .md > :is(p, h3, h4, h5):last-child::after,
+  .msg[data-status="streaming"] .md > :is(ul, ol):last-child > li:last-child::after {
+    content: ""; display: inline-block; width: .5em; height: 1.05em; margin-left: .2em;
+    vertical-align: -.18em; border-radius: 3px; background: var(--accent);
+    animation: caret 1s ease-in-out infinite;
+  }
+  @keyframes caret { 50% { opacity: .2; } }
+
+  .err { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem .8rem; margin-top: .4rem; padding: .6rem .9rem; border-radius: 12px; background: var(--danger-bg); color: var(--danger); font-weight: 550; }
+  .err .btn { border-color: currentColor; background: transparent; color: inherit; }
+  .err .btn:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
+
+  .meta { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin-top: .7rem; color: var(--ink-2); font-size: .84rem; font-variant-numeric: tabular-nums; animation: rise .3s ease-out both; }
+  .chip { display: inline-flex; align-items: baseline; gap: .4rem; padding: .16rem .65rem; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); }
+  .chip b { color: var(--ink); font-weight: 680; }
+  .chip small { color: var(--ink-3); font-size: inherit; }
+
+  .msg.switch { display: flex; align-items: center; gap: .9rem; color: var(--ink-2); font-size: .86rem; }
+  .msg.switch::before, .msg.switch::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+  .switch-pill { display: inline-flex; align-items: center; gap: .45rem; padding: .2rem .8rem; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); }
+  .switch-pill b { color: var(--ink); font-weight: 650; }
+  .switch-pill i { color: var(--ink-3); font-style: normal; }
+
+  /* ---------- empty state ---------- */
+  .empty { width: 100%; max-width: 40rem; margin: auto; padding: 2rem 1.25rem; text-align: center; animation: rise .35s ease-out both; }
+  .empty h1 { margin: 0 0 .4rem; font-size: 2.1rem; font-weight: 680; letter-spacing: -.025em; line-height: 1.2; }
+  .empty p { margin: 0 0 1.7rem; color: var(--ink-2); }
+  .suggestions { display: grid; gap: .55rem; }
+  .suggest {
+    display: flex; align-items: center; justify-content: space-between; gap: 1rem; width: 100%;
+    padding: .75rem 1rem; border: 1px solid var(--line); border-radius: var(--radius);
+    background: var(--surface); text-align: left;
+    transition: border-color .15s, transform .15s, box-shadow .15s;
+  }
+  .suggest:hover { border-color: var(--line-strong); transform: translateY(-1px); box-shadow: 0 4px 14px rgba(16, 24, 20, .07); }
+  .suggest svg { color: var(--ink-3); transform: rotate(90deg); }
+
+  /* ---------- composer ---------- */
+  .dock { position: relative; padding: 0 1.25rem .75rem; }
+  .dock-inner { max-width: var(--column); margin: 0 auto; }
+  .composer {
+    display: flex; align-items: flex-end; gap: .5rem;
+    padding: .45rem .45rem .45rem 1.15rem;
+    border: 1px solid var(--line-strong); border-radius: 26px; background: var(--surface);
+    box-shadow: 0 1px 2px rgba(16, 24, 20, .04), 0 8px 24px rgba(16, 24, 20, .06);
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .composer:focus-within { border-color: var(--brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 18%, transparent); }
+  .composer textarea { flex: 1; min-width: 0; max-height: 11rem; padding: .5rem 0; border: 0; outline: 0; resize: none; background: transparent; line-height: 1.5; }
+  .composer textarea::placeholder { color: var(--ink-3); }
+  .send {
+    display: grid; place-items: center; width: 2.6rem; height: 2.6rem; flex: none;
+    border: 0; border-radius: 50%; background: var(--brand); color: var(--on-brand); font-size: 1.2rem;
+    transition: background .15s, opacity .15s, transform .1s;
+  }
+  .send:hover:not(:disabled) { background: var(--brand-hover); }
+  .send:active:not(:disabled) { transform: scale(.93); }
+  .send:disabled { opacity: .32; cursor: default; }
+  .send[data-mode="stop"] { background: var(--ink); color: var(--bg); }
+  .send[data-mode="send"] .i-stop, .send[data-mode="stop"] .i-send { display: none; }
+
+  .jump {
+    position: absolute; left: 50%; bottom: calc(100% + .6rem); z-index: 5;
+    display: grid; place-items: center; width: 2.3rem; height: 2.3rem;
+    border: 1px solid var(--line-strong); border-radius: 50%; background: var(--surface); box-shadow: var(--shadow);
+    font-size: 1.05rem; opacity: 0; pointer-events: none;
+    transform: translate(-50%, 6px); transition: opacity .18s, transform .18s;
+  }
+  .jump.show { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }
+
+  .statusline { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .5rem .7rem 0; color: var(--ink-3); font-size: .8rem; }
+  .status { display: inline-flex; align-items: center; gap: .5rem; min-width: 0; }
+  .status span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .led { width: .5rem; height: .5rem; border-radius: 50%; background: var(--ink-3); flex: none; }
+  .status[data-state="ready"] .led { background: var(--ok); }
+  .status[data-state="loading"] .led { background: var(--busy); animation: caret 1s ease-in-out infinite; }
+  .status[data-state="warn"] .led { background: var(--busy); }
+  .status[data-state="down"] .led { background: var(--danger); }
+  .status-side { display: flex; align-items: center; gap: .8rem; white-space: nowrap; }
+  .net { padding: .05rem .55rem; border: 1px solid var(--line-strong); border-radius: 999px; color: var(--ink-2); font-weight: 600; }
+
+  /* ---------- connection dialog ---------- */
+  dialog { width: min(35rem, calc(100vw - 2rem)); padding: 0; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+  dialog[open] { animation: rise .2s ease-out; }
+  dialog::backdrop { background: rgba(10, 16, 13, .4); }
+  .sheet { display: grid; gap: 1rem; padding: 1.2rem 1.3rem 1.1rem; }
+  .sheet-head { display: flex; align-items: center; justify-content: space-between; }
+  .sheet-head h2 { margin: 0; font-size: 1.15rem; font-weight: 680; }
+  .field { display: grid; gap: .3rem; }
+  .field > span { color: var(--ink-2); font-size: .85rem; font-weight: 600; }
+  .field input, .field select { width: 100%; padding: .5rem .7rem; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--bg); }
+  .field input { font-family: var(--mono); font-size: .92rem; }
+  .field-row { display: grid; grid-template-columns: 1fr auto; gap: 1rem; align-items: end; }
+  .seg { display: inline-flex; padding: 3px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--bg); }
+  .seg button { padding: .32rem .9rem; border: 0; border-radius: 7px; background: none; font-size: .9rem; font-weight: 550; color: var(--ink-2); }
+  .seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 3px rgba(16, 24, 20, .18); }
+  .diag { display: grid; gap: .45rem; margin: 0; padding: .8rem .9rem; list-style: none; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); font-size: .88rem; }
+  .diag li { display: grid; grid-template-columns: 1.1rem 1fr; gap: .45rem; align-items: baseline; }
+  .diag li::before { content: "•"; color: var(--ink-3); font-weight: 700; text-align: center; }
+  .diag li[data-ok="yes"]::before { content: "✓"; color: var(--ok); }
+  .diag li[data-ok="no"]::before { content: "✕"; color: var(--danger); }
+  .diag code { font-family: var(--mono); font-size: .92em; }
+  .sheet-foot { display: flex; align-items: center; gap: .5rem; }
+  .sheet-foot .spacer { flex: 1; }
+
+  @media (max-width: 720px) {
+    .brand-tag, .pick-vendor, .hint, #newChatBtn span { display: none; }
+    #newChatBtn { padding: .5rem; }
+    .topbar { padding: .55rem .8rem; gap: .5rem; }
+    .menu { min-width: 0; width: calc(100vw - 2rem); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <img id="brandLogo" class="brand-logo" alt="" hidden>
+      <span id="brandName" class="brand-name"></span>
+      <span id="brandTag" class="brand-tag"></span>
+    </div>
+
+    <div class="picker">
+      <button id="modelBtn" class="pick" type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="Active model">
+        <span class="dot"></span>
+        <span class="pick-name"></span>
+        <span class="pick-vendor"></span>
+        <span data-icon="chevron"></span>
+      </button>
+      <div id="modelMenu" class="menu" role="listbox" aria-label="Choose a model" hidden></div>
+    </div>
+
+    <div class="top-actions">
+      <button id="newChatBtn" class="btn" type="button" data-icon="plus"><span>New chat</span></button>
+      <button id="settingsBtn" class="icon-btn" type="button" aria-label="Connection settings" title="Connection settings" data-icon="sliders"></button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner" role="alert" hidden>
+    <span id="bannerText"></span>
+    <button id="bannerAction" class="btn small" type="button"></button>
+  </div>
+
+  <main id="scroller" class="scroller">
+    <section id="empty" class="empty">
+      <h1>Ask anything.</h1>
+      <p id="emptySub"></p>
+      <div id="suggestions" class="suggestions"></div>
+    </section>
+    <div id="thread" class="thread" role="log" aria-label="Conversation" hidden></div>
+  </main>
+
+  <footer class="dock">
+    <div class="dock-inner">
+      <button id="jumpBtn" class="jump" type="button" aria-label="Jump to the latest message" data-icon="down"></button>
+      <form id="composer" class="composer">
+        <textarea id="input" rows="1" autocomplete="off" aria-label="Message"></textarea>
+        <button id="sendBtn" class="send" type="submit" data-mode="send" aria-label="Send" disabled>
+          <span class="i-send" data-icon="up"></span><span class="i-stop" data-icon="stop"></span>
+        </button>
+      </form>
+      <div class="statusline">
+        <span id="engineStatus" class="status" data-state="idle"><span class="led"></span><span id="statusText"></span></span>
+        <span class="status-side">
+          <span id="netStatus" class="net" hidden>Network off</span>
+          <span class="hint">Enter to send · Shift+Enter for a new line</span>
+        </span>
+      </div>
+    </div>
+  </footer>
+</div>
+
+<dialog id="settingsDialog" aria-labelledby="settingsTitle">
+  <form id="settingsForm" class="sheet" method="dialog">
+    <div class="sheet-head">
+      <h2 id="settingsTitle">Connection</h2>
+      <button id="setClose" class="icon-btn" type="button" aria-label="Close" data-icon="close"></button>
+    </div>
+    <label class="field">
+      <span>Engine address</span>
+      <input id="setUrl" type="text" spellcheck="false" autocomplete="off">
+    </label>
+    <div class="field-row">
+      <label class="field">
+        <span>API</span>
+        <select id="setApi">
+          <option value="ollama">Ollama (native /api/chat)</option>
+          <option value="openai">OpenAI-compatible (/v1/chat/completions)</option>
+        </select>
+      </label>
+      <div class="field">
+        <span>Theme</span>
+        <div id="setTheme" class="seg">
+          <button type="button" data-theme-value="light">Light</button>
+          <button type="button" data-theme-value="dark">Dark</button>
+        </div>
+      </div>
+    </div>
+    <ul id="diag" class="diag"></ul>
+    <div class="sheet-foot">
+      <button id="setReset" class="btn" type="button">Use defaults</button>
+      <span class="spacer"></span>
+      <button id="setTest" class="btn" type="button">Test connection</button>
+      <button class="btn primary" value="done">Done</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+'use strict';
+
+/* =====================================================================
+   CONFIG: the only block to edit when connecting the models.
+   ===================================================================== */
+const CONFIG = {
+  brand: {
+    name: 'NextXR',
+    tagline: 'Air-gapped AI Lab · local demo',
+    logo: '',                        // optional logo as a data: URI, so the file stays self-contained
+  },
+
+  engine: {
+    name: 'Ollama',                  // used in status and error text ("Start Ollama.")
+    url: 'http://127.0.0.1:11434',   // where the engine listens
+    api: 'ollama',                   // 'ollama' = native /api/chat · 'openai' = /v1/chat/completions
+    apiKey: '',                      // only for OpenAI-compatible engines that need one
+    keepAlive: '',                   // e.g. '30m'. Empty = the engine's own OLLAMA_KEEP_ALIVE applies
+    preload: true,                   // start loading a model the moment it is selected (Ollama API only)
+  },
+
+  // Exactly two models (requirement D-02). The first one is active when the page opens.
+  //   tag     the name the engine knows the model by
+  //   accent  teal | violet | amber | blue
+  //   think   optional true/false, sent to Ollama for models that can reason before answering
+  models: [
+    { tag: 'gemma4:e2b-it-qat', name: 'Gemma 4 E2B', vendor: 'Google', licence: 'Apache-2.0', accent: 'teal' },
+    { tag: 'llama3.2:3b', name: 'Llama 3.2 3B', vendor: 'Meta', licence: 'Llama 3.2 Community Licence', accent: 'violet' },
+  ],
+
+  // {model} and {vendor} are replaced with the active model's name and vendor.
+  systemPrompt: 'You are {model}, an AI model made by {vendor}, running locally on this machine with no internet access. Be helpful and concise. Always reply in the language the user writes in.',
+
+  options: { temperature: 0.7 },     // sampling options passed to the engine; {} = the model's defaults
+  maxHistoryMessages: 24,            // earlier messages sent along as context
+
+  suggestions: [
+    'Explain what an air-gapped network is and why it is used.',
+    'Write a Python function that verifies the SHA-256 checksum of a file.',
+    'एयर-गैप्ड नेटवर्क क्या होता है? सरल शब्दों में समझाइए।',
+  ],
+};
+
+/* =====================================================================
+   Settings (address, API and theme can be changed from the Connection panel)
+   ===================================================================== */
+const STORE_KEY = 'nextxr-chat-demo';
+const PREVIEW = new URLSearchParams(location.search).has('preview');   // simulated replies, for working on the UI
+const CONFIG_SIGNATURE = `${CONFIG.engine.url}|${CONFIG.engine.api}`;
+
+function readStore() {
+  try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch { return {}; }
+}
+function writeStore(patch) {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify({ ...readStore(), ...patch })); } catch { /* storage unavailable */ }
+}
+
+const stored = readStore();
+// A saved address only applies while CONFIG is unchanged, so editing CONFIG always wins.
+const override = stored.signature === CONFIG_SIGNATURE ? stored : {};
+const settings = {
+  url: cleanUrl(override.url || CONFIG.engine.url),
+  api: override.api || CONFIG.engine.api,
+  theme: stored.theme || 'light',
+};
+
+function cleanUrl(url) {
+  return url.trim().replace(/\/+$/, '').replace(/\/v1$/, '');
+}
+
+/* =====================================================================
+   Engine adapters. Each one offers:
+     probe()                     -> { installed: Set, loaded: Map(tag -> % on GPU) | null }
+     preload(tag, signal)        -> loads a model into memory (optional)
+     chat({model, messages, signal}) -> async stream of {type:'text'|'thinking'|'done'}
+   ===================================================================== */
+class EngineError extends Error {
+  constructor(kind, message) { super(message); this.kind = kind; }   // kind: down | blocked | missing | engine
+}
+
+function timeoutSignal(ms, parent) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new DOMException('Timed out', 'TimeoutError')), ms);
+  controller.signal.addEventListener('abort', () => clearTimeout(timer), { once: true });
+  if (parent) {
+    if (parent.aborted) controller.abort(parent.reason);
+    else parent.addEventListener('abort', () => controller.abort(parent.reason), { once: true });
+  }
+  return controller.signal;
+}
+
+const sleep = (ms, signal) => new Promise((resolve, reject) => {
+  if (signal?.aborted) return reject(signal.reason);
+  const timer = setTimeout(resolve, ms);
+  signal?.addEventListener('abort', () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
+});
+
+/** The engine answers but not to this page: that is a CORS block, not a stopped engine. */
+async function engineAnswers() {
+  try {
+    await fetch(settings.url + '/', { mode: 'no-cors', signal: timeoutSignal(1500) });
+    return true;
+  } catch { return false; }
+}
+
+async function call(path, { method = 'GET', body, signal, timeout } = {}) {
+  const headers = {};
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  if (settings.api === 'openai' && CONFIG.engine.apiKey) headers.Authorization = `Bearer ${CONFIG.engine.apiKey}`;
+
+  let response;
+  try {
+    response = await fetch(settings.url + path, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: timeout ? timeoutSignal(timeout, signal) : signal,
+    });
+  } catch (error) {
+    if (signal?.aborted) throw error;   // Stop was pressed
+    throw new EngineError((await engineAnswers()) ? 'blocked' : 'down', 'The engine could not be reached.');
+  }
+  if (!response.ok) {
+    let detail = '';
+    try {
+      const data = await response.json();
+      detail = typeof data.error === 'string' ? data.error : data.error?.message || '';
+    } catch { /* no JSON body */ }
+    const error = new EngineError('engine', detail || `HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+  return response;
+}
+
+/** Any 404 from a chat or load request means the engine does not have that model. */
+function asMissing(error) {
+  if (error instanceof EngineError && (error.status === 404 || /not found/i.test(error.message))) error.kind = 'missing';
+  return error;
+}
+
+async function* readLines(response) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let newline;
+    while ((newline = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, newline).trim();
+      buffer = buffer.slice(newline + 1);
+      if (line) yield line;
+    }
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) yield buffer.trim();
+}
+
+const adapters = {
+  ollama: {
+    norm: tag => (tag.includes(':') ? tag : `${tag}:latest`).toLowerCase(),
+
+    async probe() {
+      const tags = await (await call('/api/tags', { timeout: 2500 })).json();
+      if (!Array.isArray(tags.models)) throw new EngineError('engine', 'Unexpected answer from /api/tags');
+      const installed = new Set(tags.models.map(m => this.norm(m.model || m.name)));
+      let loaded = null;
+      try {
+        const running = await (await call('/api/ps', { timeout: 2500 })).json();
+        loaded = new Map((running.models || []).map(m => [
+          this.norm(m.model || m.name),
+          m.size ? Math.round((100 * (m.size_vram || 0)) / m.size) : null,
+        ]));
+      } catch { /* engine too old for /api/ps: loaded state unknown */ }
+      return { installed, loaded };
+    },
+
+    async preload(tag, signal) {
+      const body = { model: tag, stream: false };
+      if (CONFIG.engine.keepAlive) body.keep_alive = CONFIG.engine.keepAlive;
+      try { await call('/api/generate', { method: 'POST', body, signal }); } catch (error) { throw asMissing(error); }
+    },
+
+    async *chat({ model, messages, signal }) {
+      const body = { model: model.tag, messages, stream: true };
+      if (Object.keys(CONFIG.options).length) body.options = CONFIG.options;
+      if (CONFIG.engine.keepAlive) body.keep_alive = CONFIG.engine.keepAlive;
+      if (typeof model.think === 'boolean') body.think = model.think;
+
+      let response;
+      try { response = await call('/api/chat', { method: 'POST', body, signal }); } catch (error) { throw asMissing(error); }
+
+      for await (const line of readLines(response)) {
+        let data;
+        try { data = JSON.parse(line); } catch { continue; }
+        if (data.error) throw new EngineError('engine', data.error);
+        if (data.message?.content) yield { type: 'text', text: data.message.content };
+        else if (data.message?.thinking) yield { type: 'thinking' };
+        if (data.done) {
+          yield {
+            type: 'done',
+            stats: {
+              tokens: data.eval_count ?? null,
+              tokensPerSec: data.eval_count && data.eval_duration ? data.eval_count / (data.eval_duration / 1e9) : null,
+              loadSec: (data.load_duration || 0) / 1e9,
+            },
+          };
+        }
+      }
+    },
+  },
+
+  openai: {
+    norm: tag => tag,
+
+    async probe() {
+      const data = await (await call('/v1/models', { timeout: 2500 })).json();
+      if (!Array.isArray(data.data)) throw new EngineError('engine', 'Unexpected answer from /v1/models');
+      return { installed: new Set(data.data.map(m => m.id)), loaded: null };
+    },
+
+    async *chat({ model, messages, signal }) {
+      const body = { model: model.tag, messages, stream: true, stream_options: { include_usage: true }, ...CONFIG.options };
+      let response;
+      try { response = await call('/v1/chat/completions', { method: 'POST', body, signal }); } catch (error) { throw asMissing(error); }
+
+      let pieces = 0, firstAt = 0, usage = null;
+      for await (const line of readLines(response)) {
+        if (!line.startsWith('data:')) continue;
+        const payload = line.slice(5).trim();
+        if (payload === '[DONE]') break;
+        let data;
+        try { data = JSON.parse(payload); } catch { continue; }
+        if (data.error) throw new EngineError('engine', data.error.message || String(data.error));
+        const delta = data.choices?.[0]?.delta;
+        if (delta?.content) {
+          pieces++;
+          firstAt ||= performance.now();
+          yield { type: 'text', text: delta.content };
+        } else if (delta?.reasoning_content || delta?.reasoning) {
+          yield { type: 'thinking' };
+        }
+        if (data.usage) usage = data.usage;
+      }
+      // This API reports no generation time, so speed is measured here from the first word.
+      const seconds = firstAt ? (performance.now() - firstAt) / 1000 : 0;
+      const tokens = usage?.completion_tokens ?? null;
+      yield {
+        type: 'done',
+        stats: { tokens, tokensPerSec: seconds > 0.05 ? (tokens ?? pieces) / seconds : null, approx: tokens == null, loadSec: 0 },
+      };
+    },
+  },
+
+  // Simulated engine behind ?preview, for working on the interface with no model installed.
+  preview: {
+    norm: tag => tag,
+    inMemory: null,
+
+    async probe() {
+      return {
+        installed: new Set(CONFIG.models.map(m => m.tag)),
+        loaded: new Map(this.inMemory ? [[this.inMemory, 100]] : []),
+      };
+    },
+
+    async preload(tag, signal) {
+      await sleep(1800, signal);
+      this.inMemory = tag;
+    },
+
+    async *chat({ model, messages, signal }) {
+      let loadSec = 0;
+      if (this.inMemory !== model.tag) {
+        loadSec = 2.2;
+        await sleep(loadSec * 1000, signal);
+        this.inMemory = model.tag;
+      }
+      await sleep(350, signal);
+      const pieces = previewReply(model, messages.at(-1).content).match(/\s*\S+/g);
+      const rate = 32 + 14 * CONFIG.models.indexOf(model);
+      for (const piece of pieces) {
+        await sleep(1000 / rate, signal);
+        yield { type: 'text', text: piece };
+      }
+      yield { type: 'done', stats: { tokens: pieces.length, tokensPerSec: rate, loadSec } };
+    },
+  },
+};
+
+function previewReply(model, question) {
+  if (/[ऀ-ॿ]/.test(question)) {
+    return `*${model.name} का नमूना उत्तर (प्रीव्यू मोड, कोई मॉडल नहीं चल रहा है)।*\n\n` +
+      'एयर-गैप्ड नेटवर्क वह नेटवर्क होता है जो इंटरनेट या किसी भी बाहरी नेटवर्क से भौतिक रूप से अलग रखा जाता है।\n\n' +
+      '- **कोई बाहरी कनेक्शन नहीं**: न वाई-फ़ाई, न इंटरनेट लिंक।\n' +
+      '- **नियंत्रित मीडिया**: अपडेट केवल जाँचे गए मीडिया से आते हैं।';
+  }
+  return `*Simulated reply from **${model.name}**. Preview mode: no model is running.*\n\n` +
+    'An air-gapped network is physically isolated from the internet and from every other network. Three things keep it that way:\n\n' +
+    '1. **No external links**: no Wi-Fi, no uplink, no shared switches.\n' +
+    '2. **Controlled media**: updates arrive on scanned removable media.\n' +
+    '3. **Proof**: a packet capture shows that nothing leaves.\n\n' +
+    '```python\ndef is_isolated(routes: list[str]) -> bool:\n    return not any(r.startswith("0.0.0.0/0") for r in routes)\n```\n\n' +
+    '| Layer | Control |\n|---|---|\n| Network | No default route |\n| Media | Sanitisation station |';
+}
+
+const adapter = () => (PREVIEW ? adapters.preview : adapters[settings.api] || adapters.ollama);
+
+/* =====================================================================
+   Markdown to HTML. Model output is untrusted: everything is escaped,
+   and links are shown as text because there is nowhere to go offline.
+   ===================================================================== */
+const escapeHtml = text => text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+function inlineMd(source) {
+  const spans = [];
+  let text = source.replace(/`([^`\n]+)`/g, (_, code) => `\u0000${spans.push(code) - 1}\u0000`);
+  text = escapeHtml(text)
+    .replace(/\*\*(?=\S)(.+?)(?<=\S)\*\*/g, '<strong>$1</strong>')
+    .replace(/__(?=\S)(.+?)(?<=\S)__/g, '<strong>$1</strong>')
+    .replace(/(^|[^*\w])\*(?!\s)([^*\n]+?)(?<!\s)\*(?![*\w])/g, '$1<em>$2</em>')
+    .replace(/(^|[^_\w])_(?!\s)([^_\n]+?)(?<!\s)_(?![_\w])/g, '$1<em>$2</em>')
+    .replace(/~~(?=\S)(.+?)(?<=\S)~~/g, '<del>$1</del>')
+    .replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, '<span class="link" title="$2">$1</span>');
+  return text.replace(/\u0000(\d+)\u0000/g, (_, index) => `<code>${escapeHtml(spans[+index])}</code>`);
+}
+
+const RE_FENCE = /^(\s*)(`{3,}|~{3,})\s*([^\s`]*)[^`]*$/;
+const RE_LIST = /^(\s*)([-*+•]|\d{1,3}[.)])\s+(.*)$/;
+const RE_HEADING = /^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/;
+const RE_RULE = /^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/;
+const RE_QUOTE = /^\s{0,3}>\s?(.*)$/;
+const RE_TABLE_RULE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+
+const indentOf = line => line.search(/\S|$/);
+const isTableStart = (lines, i) =>
+  lines[i].includes('|') && i + 1 < lines.length && lines[i + 1].includes('|') && RE_TABLE_RULE.test(lines[i + 1]);
+const startsBlock = (lines, i) =>
+  RE_FENCE.test(lines[i]) || RE_HEADING.test(lines[i]) || RE_RULE.test(lines[i]) || RE_QUOTE.test(lines[i]) ||
+  RE_LIST.test(lines[i]) || isTableStart(lines, i);
+
+/** Returns one HTML string per top-level block, each with a single root element. */
+function mdBlocks(source) {
+  return renderLines(source.replace(/\r\n?/g, '\n').replace(/\t/g, '    ').split('\n'));
+}
+
+function renderLines(lines) {
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    let match;
+    if (!line.trim()) { i++; continue; }
+
+    if ((match = line.match(RE_FENCE))) {
+      const indent = match[1].length;
+      const closing = match[2][0] === '`' ? /^\s*`{3,}\s*$/ : /^\s*~{3,}\s*$/;
+      const code = [];
+      i++;
+      while (i < lines.length && !closing.test(lines[i])) {
+        code.push(lines[i].slice(Math.min(indent, indentOf(lines[i]))));
+        i++;
+      }
+      i++;   // the closing fence, or the end of the text while a reply is still streaming
+      out.push(
+        `<div class="code"><div class="code-head"><span>${escapeHtml(match[3] || 'code')}</span>` +
+        `<button type="button" class="ghost" data-copy="code">${ICON.copy}<span>Copy</span></button></div>` +
+        `<pre><code>${escapeHtml(code.join('\n'))}</code></pre></div>`,
+      );
+      continue;
+    }
+
+    if ((match = line.match(RE_HEADING))) {
+      const level = match[1].length <= 2 ? 3 : match[1].length === 3 ? 4 : 5;
+      out.push(`<h${level}>${inlineMd(match[2])}</h${level}>`);
+      i++;
+      continue;
+    }
+
+    if (RE_RULE.test(line)) { out.push('<hr>'); i++; continue; }
+
+    if (RE_QUOTE.test(line)) {
+      const quoted = [];
+      while (i < lines.length && (match = lines[i].match(RE_QUOTE))) { quoted.push(match[1]); i++; }
+      out.push(`<blockquote>${renderLines(quoted).join('')}</blockquote>`);
+      continue;
+    }
+
+    if (isTableStart(lines, i)) {
+      const cells = row => row.trim().replace(/^\||\|$/g, '').split('|').map(cell => cell.trim());
+      const head = cells(line);
+      const rows = [];
+      i += 2;
+      while (i < lines.length && lines[i].trim() && lines[i].includes('|')) { rows.push(cells(lines[i])); i++; }
+      out.push(
+        '<div class="table-wrap"><table><thead><tr>' + head.map(cell => `<th>${inlineMd(cell)}</th>`).join('') +
+        '</tr></thead><tbody>' +
+        rows.map(row => '<tr>' + head.map((_, c) => `<td>${inlineMd(row[c] || '')}</td>`).join('') + '</tr>').join('') +
+        '</tbody></table></div>',
+      );
+      continue;
+    }
+
+    if (RE_LIST.test(line)) {
+      const [html, next] = takeList(lines, i);
+      out.push(html);
+      i = next;
+      continue;
+    }
+
+    const paragraph = [line.trim()];
+    i++;
+    while (i < lines.length && lines[i].trim() && !startsBlock(lines, i)) { paragraph.push(lines[i].trim()); i++; }
+    out.push(`<p>${inlineMd(paragraph.join('\n')).replace(/\n/g, '<br>')}</p>`);
+  }
+  return out;
+}
+
+/** Reads one list starting at lines[start]; nested lists and code inside items are rendered recursively. */
+function takeList(lines, start) {
+  const first = lines[start].match(RE_LIST);
+  const base = first[1].length;
+  const ordered = /\d/.test(first[2]);
+  const isSibling = (line, match) => match && Math.abs(indentOf(line) - base) <= 1 && /\d/.test(match[2]) === ordered;
+  const items = [];
+  let i = start;
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const match = RE_RULE.test(line) ? null : line.match(RE_LIST);
+    const indent = indentOf(line);
+
+    if (isSibling(line, match)) {
+      items.push({ pad: indent + match[2].length + 1, lines: [match[3]] });
+      i++;
+    } else if (!line.trim()) {
+      let next = i + 1;
+      while (next < lines.length && !lines[next].trim()) next++;
+      if (next >= lines.length) break;
+      const following = lines[next];
+      if (!isSibling(following, following.match(RE_LIST)) && indentOf(following) < base + 2) break;
+      items.at(-1).lines.push('');
+      i = next;
+    } else if (indent >= base + 2) {
+      const item = items.at(-1);
+      item.lines.push(line.slice(Math.min(indent, item.pad)));
+      i++;
+    } else if (!match && lines[i - 1].trim() && !startsBlock(lines, i)) {
+      items.at(-1).lines.push(line.trim());   // text that continues the item without being indented
+      i++;
+    } else {
+      break;
+    }
+  }
+
+  const body = items.map(item => {
+    const blocks = renderLines(item.lines);
+    if (blocks[0]?.startsWith('<p>')) blocks[0] = blocks[0].slice(3, -4);
+    return `<li>${blocks.join('')}</li>`;
+  }).join('');
+  const number = parseInt(first[2], 10);
+  return [ordered ? `<ol${number > 1 ? ` start="${number}"` : ''}>${body}</ol>` : `<ul>${body}</ul>`, i];
+}
+
+/** Replaces only the blocks that changed, so earlier text is not rebuilt on every frame while streaming. */
+function patchBlocks(container, blocks) {
+  for (let index = 0; index < blocks.length; index++) {
+    const existing = container.children[index];
+    if (existing && existing.blockSource === blocks[index]) continue;
+    const template = document.createElement('template');
+    template.innerHTML = blocks[index];
+    const node = template.content.firstElementChild;
+    node.blockSource = blocks[index];
+    if (existing) existing.replaceWith(node); else container.append(node);
+  }
+  while (container.children.length > blocks.length) container.lastElementChild.remove();
+}
+
+/* =====================================================================
+   Interface
+   ===================================================================== */
+function svg(inner) {
+  return `<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
+}
+const ICON = {
+  chevron: svg('<path d="M6 9l6 6 6-6"/>'),
+  plus: svg('<path d="M12 5v14M5 12h14"/>'),
+  up: svg('<path d="M12 19V5M5.5 11.5L12 5l6.5 6.5"/>'),
+  down: svg('<path d="M12 5v14M5.5 12.5L12 19l6.5-6.5"/>'),
+  stop: svg('<rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" stroke="none"/>'),
+  check: svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>'),
+  copy: svg('<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/>'),
+  retry: svg('<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>'),
+  sliders: svg('<path d="M4 7h8M18 7h2M4 17h2M12 17h8"/><circle cx="15" cy="7" r="2.5"/><circle cx="9" cy="17" r="2.5"/>'),
+  close: svg('<path d="M6 6l12 12M18 6L6 18"/>'),
+};
+
+const $ = id => document.getElementById(id);
+const el = (tag, className, text) => {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text != null) node.textContent = text;
+  return node;
+};
+
+const modelBtn = $('modelBtn'), modelMenu = $('modelMenu'), banner = $('banner'), scroller = $('scroller'),
+  thread = $('thread'), emptyState = $('empty'), input = $('input'), sendBtn = $('sendBtn'), jumpBtn = $('jumpBtn'),
+  settingsDialog = $('settingsDialog');
+
+const state = { modelIndex: 0, items: [], busy: false, controller: null, nextId: 1 };
+let engine = { status: 'checking', detail: '', installed: null, loaded: null };
+let loadJob = null;     // { tag, controller } while a model is being loaded ahead of the next message
+let probeRun = 0;
+let pinned = true;      // the view follows new text only while the reader is at the bottom
+
+const currentModel = () => CONFIG.models[state.modelIndex];
+const tagKey = model => adapter().norm(model.tag);
+const isInstalled = model => !engine.installed || engine.installed.has(tagKey(model));
+const knowsLoaded = () => engine.loaded instanceof Map;
+const isLoaded = model => knowsLoaded() && engine.loaded.has(tagKey(model));
+const isLocalEngine = () => /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/i.test(settings.url);
+const fmtSec = seconds => `${seconds.toFixed(seconds < 10 ? 2 : 1)} s`;
+
+/* ---------- engine status ---------- */
+async function refreshEngine() {
+  const run = ++probeRun;
+  const usable = () => engine.status === 'ready' && isInstalled(currentModel());
+  const wasUsable = usable();
+  let next;
+  try {
+    next = { status: 'ready', detail: '', ...(await adapter().probe()) };
+  } catch (error) {
+    const status = error.kind === 'down' ? 'down' : error.kind === 'blocked' ? 'blocked' : 'error';
+    next = { status, detail: error.message || '', installed: null, loaded: null };
+  }
+  if (run !== probeRun) return;   // a newer check has started
+  engine = next;
+  renderEngine();
+  // The engine has just started, or the model has just been pulled: get it into memory now.
+  if (!wasUsable && usable()) ensureLoaded();
+}
+
+function watchEngine() {
+  setTimeout(async () => {
+    try {
+      if (!document.hidden && !state.busy && !loadJob) await refreshEngine();
+    } finally {
+      watchEngine();
+    }
+  }, engine.status === 'ready' ? 5000 : 2000);
+}
+
+/** Starts loading the selected model so the wait is over before the next message is sent. */
+async function ensureLoaded() {
+  const model = currentModel();
+  const active = adapter();
+  if (!CONFIG.engine.preload || !active.preload || engine.status !== 'ready' || state.busy) return;
+  if (!isInstalled(model) || !knowsLoaded() || isLoaded(model) || loadJob?.tag === model.tag) return;
+
+  loadJob?.controller.abort();
+  const job = loadJob = { tag: model.tag, controller: new AbortController() };
+  renderEngine();
+  try { await active.preload(model.tag, job.controller.signal); } catch { /* the next message reports any problem */ }
+  if (loadJob === job) {
+    loadJob = null;
+    await refreshEngine();
+  }
+}
+
+function blockedText() {
+  const name = CONFIG.engine.name;
+  return settings.api === 'ollama'
+    ? `${name} is running but refuses requests from this page. Set OLLAMA_ORIGINS to * and restart ${name}.`
+    : `${name} is running but refuses requests from this page. Allow cross-origin (CORS) requests on the engine.`;
+}
+
+function describeError(error, model) {
+  switch (error.kind) {
+    case 'down': return `Local engine not running. Start ${CONFIG.engine.name}.`;
+    case 'blocked': return blockedText();
+    case 'missing': return `${model.name} is not installed on this machine. Run: ollama pull ${model.tag}`;
+    case 'engine': return `The engine reported: ${error.message}`;
+    default: return 'The connection to the engine was lost before the reply finished.';
+  }
+}
+
+function renderEngine() {
+  renderBanner();
+  renderStatus();
+  renderPicker();
+  if (settingsDialog.open) renderDiagnostics();
+}
+
+function renderBanner() {
+  const model = currentModel();
+  let kind = '', text = '', command = '', action = '';
+  if (PREVIEW) {
+    kind = 'info'; text = 'Preview mode: replies are simulated. No model is running.';
+  } else if (engine.status === 'down') {
+    kind = 'danger'; text = `Local engine not running. Start ${CONFIG.engine.name}.`; action = 'Check again';
+  } else if (engine.status === 'blocked') {
+    kind = 'danger'; text = blockedText(); action = 'Check again';
+  } else if (engine.status === 'error') {
+    kind = 'danger'; action = 'Check again';
+    text = `${settings.url} did not answer like ${settings.api === 'ollama' ? 'Ollama' : 'an OpenAI-compatible engine'}. Check the address and API in Connection settings.`;
+  } else if (engine.status === 'ready' && !isInstalled(model)) {
+    kind = 'warn'; text = `${model.name} is not installed on this machine. Run`; command = `ollama pull ${model.tag}`; action = 'Check again';
+  }
+  banner.hidden = !kind;
+  if (!kind) return;
+  banner.dataset.kind = kind;
+  $('bannerText').replaceChildren(text, ...(command ? [' ', el('code', '', command)] : []));
+  $('bannerAction').hidden = !action;
+  $('bannerAction').textContent = action;
+}
+
+function renderStatus() {
+  const model = currentModel(), name = CONFIG.engine.name;
+  let kind = 'idle', text;
+  if (engine.status === 'checking') {
+    text = `Connecting to ${name}…`;
+  } else if (engine.status !== 'ready') {
+    kind = 'down';
+    text = engine.status === 'down' ? 'Local engine not running'
+      : engine.status === 'blocked' ? `${name} is blocking this page` : 'Unexpected answer from the engine';
+  } else if (!isInstalled(model)) {
+    kind = 'warn'; text = `${model.name} is not installed`;
+  } else if (loadJob?.tag === model.tag) {
+    kind = 'loading'; text = `Loading ${model.name} into memory…`;
+  } else if (!knowsLoaded()) {
+    kind = 'ready'; text = `${name} connected`;
+  } else if (isLoaded(model)) {
+    const onGpu = engine.loaded.get(tagKey(model));
+    kind = 'ready'; text = `${model.name} ready in memory` + (onGpu != null && onGpu < 100 ? ` · ${onGpu}% on GPU` : '');
+  } else {
+    kind = 'ready'; text = `${name} running · ${model.name} loads with the next message`;
+  }
+  $('engineStatus').dataset.state = kind;
+  $('statusText').textContent = PREVIEW ? `Preview · ${text}` : text;
+}
+
+/* ---------- model picker ---------- */
+function buildPicker() {
+  modelMenu.replaceChildren(...CONFIG.models.map((model, index) => {
+    const option = el('button', 'opt');
+    option.type = 'button';
+    option.setAttribute('role', 'option');
+    option.dataset.index = index;
+    option.dataset.accent = model.accent;
+    const text = el('span', 'opt-text');
+    text.append(el('span', 'opt-name', model.name), el('span', 'opt-sub', [model.vendor, model.licence, model.tag].filter(Boolean).join(' · ')));
+    const check = el('span', 'opt-check');
+    check.innerHTML = ICON.check;
+    option.append(el('span', 'dot'), text, el('span', 'opt-state'), check);
+    return option;
+  }));
+}
+
+function renderPicker() {
+  const model = currentModel();
+  modelBtn.dataset.accent = model.accent;
+  modelBtn.querySelector('.pick-name').textContent = model.name;
+  modelBtn.querySelector('.pick-vendor').textContent = model.vendor;
+  input.placeholder = `Message ${model.name}…`;
+  CONFIG.models.forEach((item, index) => {
+    const option = modelMenu.children[index];
+    option.setAttribute('aria-selected', String(index === state.modelIndex));
+    const label = option.querySelector('.opt-state');
+    const missing = engine.status === 'ready' && !isInstalled(item);
+    label.dataset.kind = missing ? 'warn' : '';
+    label.textContent = missing ? 'Not installed' : loadJob?.tag === item.tag ? 'Loading…' : isLoaded(item) ? 'In memory' : '';
+  });
+}
+
+function openMenu() {
+  modelMenu.hidden = false;
+  modelBtn.setAttribute('aria-expanded', 'true');
+  modelMenu.children[state.modelIndex].focus();
+}
+
+function closeMenu(returnFocus) {
+  if (modelMenu.hidden) return;
+  modelMenu.hidden = true;
+  modelBtn.setAttribute('aria-expanded', 'false');
+  if (returnFocus) modelBtn.focus();
+}
+
+function selectModel(index) {
+  closeMenu();
+  if (index !== state.modelIndex) {
+    state.modelIndex = index;
+    markSwitch();
+    renderEngine();
+    ensureLoaded();
+  }
+  input.focus();
+}
+
+/** Shows "Switched to ..." in the conversation when the next reply will come from a different model. */
+function markSwitch() {
+  const last = state.items.at(-1);
+  if (last?.role === 'switch') removeItem(last);
+  const lastReply = state.items.findLast(item => item.role === 'assistant');
+  if (lastReply && lastReply.model !== currentModel()) {
+    addItem({ role: 'switch', model: currentModel() });
+    follow(true);
+  }
+}
+
+/* ---------- conversation ---------- */
+function addItem(item) {
+  item.id = state.nextId++;
+  state.items.push(item);
+  mount(item);
+  emptyState.hidden = true;
+  thread.hidden = false;
+  return item;
+}
+
+function removeItem(item) {
+  const index = state.items.indexOf(item);
+  if (index >= 0) state.items.splice(index, 1);
+  item.node?.remove();
+}
+
+function mount(item) {
+  let node;
+  if (item.role === 'user') {
+    node = el('div', 'msg user');
+    node.append(el('div', 'bubble', item.content));
+  } else if (item.role === 'switch') {
+    node = el('div', 'msg switch');
+    const pill = el('span', 'switch-pill');
+    pill.append(el('span', 'dot'), 'Switched to ', el('b', '', item.model.name), el('i', '', item.model.vendor));
+    node.append(pill);
+  } else {
+    node = el('article', 'msg assistant');
+    node.innerHTML =
+      '<div class="who"><span class="dot"></span><span class="who-name"></span><span class="who-vendor"></span></div>' +
+      '<div class="wait"><span class="shimmer"></span><span class="wait-time"></span></div>' +
+      '<div class="md"></div>' +
+      `<div class="err" hidden><span class="err-text"></span><button type="button" class="btn small" data-retry>${ICON.retry}Retry</button></div>` +
+      '<div class="meta" hidden></div>';
+    node.querySelector('.who-name').textContent = item.model.name;
+    node.querySelector('.who-vendor').textContent = item.model.vendor;
+  }
+  if (item.model) node.dataset.accent = item.model.accent;
+  node.dataset.id = item.id;
+  item.node = node;
+  thread.append(node);
+  if (item.role === 'assistant') paint(item);
+}
+
+function paint(item) {
+  const node = item.node;
+  node.dataset.status = item.status;
+
+  const wait = node.querySelector('.wait');
+  wait.hidden = item.status !== 'waiting';
+  if (!wait.hidden) {
+    const label = item.cold && !item.thinking ? `Loading ${item.model.name} into memory` : 'Thinking';
+    if (wait.firstElementChild.textContent !== label) wait.firstElementChild.textContent = label;
+  }
+
+  patchBlocks(node.querySelector('.md'), item.content ? mdBlocks(item.content) : []);
+
+  const error = node.querySelector('.err');
+  error.hidden = item.status !== 'error';
+  if (!error.hidden) error.querySelector('.err-text').textContent = item.error;
+
+  const meta = node.querySelector('.meta');
+  const finished = item.content && item.status !== 'waiting' && item.status !== 'streaming';
+  meta.hidden = !finished;
+  if (finished) meta.innerHTML = metaHtml(item);
+}
+
+function metaHtml(item) {
+  const stats = item.stats || {};
+  const chips = [];
+  if (item.firstWordSec != null) {
+    const load = stats.loadSec > 0.5 ? `<small>incl. ${fmtSec(stats.loadSec)} model load</small>` : '';
+    chips.push(`<span class="chip">First word <b>${fmtSec(item.firstWordSec)}</b>${load}</span>`);
+  }
+  if (stats.tokensPerSec) chips.push(`<span class="chip">Speed <b>${stats.approx ? '≈ ' : ''}${stats.tokensPerSec.toFixed(1)} tokens/s</b></span>`);
+  if (stats.tokens) chips.push(`<span class="chip"><b>${stats.tokens}</b> tokens</span>`);
+  if (item.status === 'stopped') chips.push('<span class="chip">Stopped</span>');
+  return chips.join('') + `<button type="button" class="ghost" data-copy="reply">${ICON.copy}<span>Copy</span></button>`;
+}
+
+let paintQueued = false;
+function schedulePaint(item) {
+  if (paintQueued) return;
+  paintQueued = true;
+  requestAnimationFrame(() => {
+    paintQueued = false;
+    if (item.node.isConnected) paint(item);
+    follow();
+  });
+}
+
+function follow(force) {
+  if (force) pinned = true;
+  if (pinned) scroller.scrollTop = scroller.scrollHeight;
+  jumpBtn.classList.toggle('show', !pinned);
+}
+
+function setBusy(busy) {
+  state.busy = busy;
+  thread.setAttribute('aria-busy', String(busy));
+  sendBtn.dataset.mode = busy ? 'stop' : 'send';
+  sendBtn.setAttribute('aria-label', busy ? 'Stop' : 'Send');
+  syncSendButton();
+}
+
+function syncSendButton() {
+  sendBtn.disabled = !state.busy && !input.value.trim();
+}
+
+function buildMessages(model) {
+  const history = state.items
+    .filter(item => (item.role === 'user' || item.role === 'assistant') && item.content)
+    .map(item => ({ role: item.role, content: item.content }))
+    .slice(-CONFIG.maxHistoryMessages);
+  const system = CONFIG.systemPrompt.replaceAll('{model}', model.name).replaceAll('{vendor}', model.vendor);
+  return system ? [{ role: 'system', content: system }, ...history] : history;
+}
+
+function send(text) {
+  text = text.trim();
+  if (!text || state.busy) return;
+  // A failed turn is replaced by the new one; Retry only makes sense on the latest reply.
+  const last = state.items.at(-1);
+  if (last?.role === 'assistant' && last.status === 'error' && !last.content) removeItem(last);
+  thread.querySelectorAll('[data-retry]').forEach(button => button.remove());
+  addItem({ role: 'user', content: text });
+  generate();
+}
+
+async function generate() {
+  const model = currentModel();
+  const messages = buildMessages(model);
+  const controller = new AbortController();
+  const item = addItem({
+    role: 'assistant', model, content: '', status: 'waiting',
+    cold: knowsLoaded() && !isLoaded(model),
+    startedAt: performance.now(),
+  });
+  state.controller = controller;
+  setBusy(true);
+  follow(true);
+
+  const ticker = setInterval(() => {
+    if (item.status === 'waiting') item.node.querySelector('.wait-time').textContent = `${((performance.now() - item.startedAt) / 1000).toFixed(1)} s`;
+  }, 100);
+  let pieces = 0, firstAt = 0;
+
+  try {
+    for await (const event of adapter().chat({ model, messages, signal: controller.signal })) {
+      if (event.type === 'text') {
+        if (!firstAt) {
+          firstAt = performance.now();
+          item.firstWordSec = (firstAt - item.startedAt) / 1000;
+          item.status = 'streaming';
+        }
+        pieces++;
+        item.content += event.text;
+        schedulePaint(item);
+      } else if (event.type === 'thinking' && !item.thinking) {
+        item.thinking = true;
+        schedulePaint(item);
+      } else if (event.type === 'done') {
+        item.stats = event.stats;
+      }
+    }
+    if (!item.content.trim()) throw new EngineError('engine', 'the model returned an empty reply.');
+    item.status = 'done';
+  } catch (error) {
+    if (controller.signal.aborted) {
+      if (item.content) item.status = 'stopped'; else removeItem(item);
+    } else {
+      item.status = 'error';
+      item.error = describeError(error, model);
+      if (error.kind === 'down' || error.kind === 'blocked') {
+        engine = { status: error.kind, detail: '', installed: null, loaded: null };
+        renderEngine();
+      }
+    }
+  } finally {
+    clearInterval(ticker);
+    // Stopped replies carry no figures from the engine; estimate speed from what arrived.
+    if (!item.stats && pieces > 1) {
+      const seconds = (performance.now() - firstAt) / 1000;
+      if (seconds > 0.05) item.stats = { tokens: null, tokensPerSec: pieces / seconds, approx: true, loadSec: 0 };
+    }
+    if (state.controller === controller) {
+      state.controller = null;
+      setBusy(false);
+    }
+    if (item.node.isConnected) {
+      paint(item);
+      follow();
+    }
+    refreshEngine();
+  }
+}
+
+function stop() {
+  state.controller?.abort();
+}
+
+function retry(item) {
+  if (state.busy) return;
+  removeItem(item);
+  generate();
+}
+
+function newChat() {
+  state.controller?.abort();
+  state.controller = null;
+  setBusy(false);
+  state.items = [];
+  thread.replaceChildren();
+  thread.hidden = true;
+  emptyState.hidden = false;
+  follow(true);
+  input.focus();
+}
+
+/* ---------- composer ---------- */
+function autosize() {
+  input.style.height = 'auto';
+  input.style.height = `${input.scrollHeight}px`;
+  syncSendButton();
+}
+
+function submit() {
+  if (state.busy || !input.value.trim()) return;
+  const text = input.value;
+  input.value = '';
+  autosize();
+  send(text);
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const area = el('textarea');
+    area.value = text;
+    area.style.cssText = 'position:fixed;opacity:0';
+    document.body.append(area);
+    area.select();
+    document.execCommand('copy');
+    area.remove();
+  }
+}
+
+/* ---------- connection panel ---------- */
+function openSettings() {
+  $('setUrl').value = settings.url;
+  $('setApi').value = settings.api;
+  $('setUrl').disabled = $('setApi').disabled = $('setTest').disabled = $('setReset').disabled = PREVIEW;
+  settingsDialog.returnValue = '';   // so closing with Esc never counts as "Done" from an earlier visit
+  renderTheme();
+  renderDiagnostics();
+  settingsDialog.showModal();
+}
+
+function applySettings() {
+  const url = cleanUrl($('setUrl').value) || CONFIG.engine.url;
+  const api = $('setApi').value;
+  if (url === settings.url && api === settings.api) return false;
+  settings.url = url;
+  settings.api = api;
+  writeStore({ url, api, signature: CONFIG_SIGNATURE });
+  loadJob?.controller.abort();
+  loadJob = null;
+  engine = { status: 'checking', detail: '', installed: null, loaded: null };
+  renderEngine();
+  renderEmptyText();
+  return true;
+}
+
+function renderTheme() {
+  document.documentElement.dataset.theme = settings.theme;
+  for (const button of $('setTheme').children) button.setAttribute('aria-pressed', String(button.dataset.themeValue === settings.theme));
+}
+
+function renderDiagnostics() {
+  const rows = [];
+  const row = (ok, text, code) => {
+    const item = el('li');
+    item.dataset.ok = ok;
+    const body = el('span', '', text);
+    if (code) body.append(' ', el('code', '', code));
+    item.append(body);
+    rows.push(item);
+  };
+  if (PREVIEW) {
+    row('', 'Preview mode: the engine is simulated. Open the file without ?preview to use the real one.');
+  } else if (engine.status === 'checking') {
+    row('', `Checking ${settings.url}…`);
+  } else if (engine.status === 'down') {
+    row('no', `Nothing answers at ${settings.url}. Start ${CONFIG.engine.name}.`);
+  } else if (engine.status === 'blocked') {
+    row('no', blockedText());
+  } else if (engine.status === 'error') {
+    row('no', `The address answered, but not like the selected API (${engine.detail}).`);
+  } else {
+    row('yes', `Connected to ${settings.url}`);
+    for (const model of CONFIG.models) {
+      if (!isInstalled(model)) { row('no', `${model.name} is not installed. Run`, `ollama pull ${model.tag}`); continue; }
+      const onGpu = isLoaded(model) ? engine.loaded.get(tagKey(model)) : null;
+      const memory = !isLoaded(model) ? '' : onGpu == null ? ' · in memory' : ` · in memory, ${onGpu}% on GPU`;
+      row('yes', `${model.name} installed${memory}`, model.tag);
+    }
+  }
+  $('diag').replaceChildren(...rows);
+}
+
+function renderEmptyText() {
+  $('emptySub').textContent = PREVIEW
+    ? 'Preview mode: replies are simulated, so the interface can be tried without a model.'
+    : isLocalEngine()
+      ? 'Answers come from a model running on this machine. No internet is used.'
+      : `Answers come from the engine at ${settings.url}.`;
+}
+
+/* ---------- start ---------- */
+function init() {
+  document.querySelectorAll('[data-icon]').forEach(node => node.insertAdjacentHTML('afterbegin', ICON[node.dataset.icon]));
+  document.title = `${CONFIG.brand.name} Local AI Chat`;
+  $('brandName').textContent = CONFIG.brand.name;
+  $('brandTag').textContent = CONFIG.brand.tagline;
+  if (CONFIG.brand.logo) {
+    $('brandLogo').src = CONFIG.brand.logo;
+    $('brandLogo').hidden = false;
+  }
+  $('suggestions').replaceChildren(...CONFIG.suggestions.map(text => {
+    const button = el('button', 'suggest');
+    button.type = 'button';
+    button.append(el('span', '', text));
+    button.insertAdjacentHTML('beforeend', ICON.up);
+    button.addEventListener('click', () => send(text));
+    return button;
+  }));
+  buildPicker();
+  renderEmptyText();
+  renderTheme();
+  renderEngine();
+
+  modelBtn.addEventListener('click', () => (modelMenu.hidden ? openMenu() : closeMenu()));
+  modelMenu.addEventListener('click', event => {
+    const option = event.target.closest('.opt');
+    if (option) selectModel(Number(option.dataset.index));
+  });
+  modelMenu.addEventListener('keydown', event => {
+    const options = [...modelMenu.children];
+    const at = options.indexOf(document.activeElement);
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      options[(at + (event.key === 'ArrowDown' ? 1 : options.length - 1)) % options.length].focus();
+    } else if (event.key === 'Escape') {
+      event.stopPropagation();
+      closeMenu(true);
+    } else if (event.key === 'Tab') {
+      closeMenu();
+    }
+  });
+  document.addEventListener('pointerdown', event => {
+    if (!event.target.closest('.picker')) closeMenu();
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !settingsDialog.open && state.busy) stop();
+  });
+
+  $('newChatBtn').addEventListener('click', newChat);
+  $('bannerAction').addEventListener('click', refreshEngine);
+
+  input.addEventListener('input', autosize);
+  input.addEventListener('keydown', event => {
+    // isComposing: Enter that confirms a Hindi (IME) word must not send the message
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {
+      event.preventDefault();
+      submit();
+    }
+  });
+  $('composer').addEventListener('submit', event => {
+    event.preventDefault();
+    if (state.busy) stop(); else submit();
+  });
+
+  let lastTop = 0;
+  scroller.addEventListener('scroll', () => {
+    const fromBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+    if (fromBottom < 90) pinned = true;
+    else if (scroller.scrollTop < lastTop) pinned = false;   // only scrolling up lets go of the latest text
+    lastTop = scroller.scrollTop;
+    jumpBtn.classList.toggle('show', !pinned);
+  }, { passive: true });
+  new ResizeObserver(() => follow()).observe(scroller);
+  jumpBtn.addEventListener('click', () => follow(true));
+
+  thread.addEventListener('click', event => {
+    const item = state.items.find(entry => String(entry.id) === event.target.closest('.msg')?.dataset.id);
+    const copy = event.target.closest('[data-copy]');
+    if (copy) {
+      const text = copy.dataset.copy === 'code' ? copy.closest('.code').querySelector('code').textContent : item.content;
+      copyText(text).then(() => {
+        const label = copy.querySelector('span');
+        label.textContent = 'Copied';
+        setTimeout(() => { label.textContent = 'Copy'; }, 1400);
+      });
+    } else if (item && event.target.closest('[data-retry]')) {
+      retry(item);
+    }
+  });
+
+  $('settingsBtn').addEventListener('click', openSettings);
+  $('setClose').addEventListener('click', () => settingsDialog.close('cancel'));
+  $('setTest').addEventListener('click', () => {
+    applySettings();
+    engine = { ...engine, status: 'checking' };
+    renderEngine();
+    refreshEngine();
+  });
+  $('setReset').addEventListener('click', () => {
+    $('setUrl').value = CONFIG.engine.url;
+    $('setApi').value = CONFIG.engine.api;
+    if (applySettings()) refreshEngine();
+  });
+  $('setTheme').addEventListener('click', event => {
+    const value = event.target.dataset.themeValue;
+    if (!value) return;
+    settings.theme = value;
+    writeStore({ theme: value });
+    renderTheme();
+  });
+  settingsDialog.addEventListener('close', () => {
+    if (settingsDialog.returnValue === 'done' && applySettings()) refreshEngine();
+    input.focus();
+  });
+
+  const showNetwork = () => { $('netStatus').hidden = navigator.onLine; };
+  addEventListener('online', showNetwork);
+  addEventListener('offline', showNetwork);
+  showNetwork();
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && !state.busy && !loadJob) refreshEngine();
+  });
+
+  input.focus();
+  refreshEngine().then(watchEngine);
+}
+
+init();
+</script>
+</body>
+</html>

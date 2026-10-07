@@ -1,35 +1,44 @@
 {
-  "default_model": "gemma4-e4b",
+  "default_model": "gemma4-e2b",
   "providers": {
     "ollama": {
       "base_url_env": "OLLAMA_BASE_URL",
-      "api_key_env": "OLLAMA_API_KEY"
+      "api_key_env": "OLLAMA_API_KEY",
+      "name": "Ollama",
+      "type": "ollama"
     },
     "llamacpp": {
       "base_url_env": "LLAMACPP_BASE_URL",
-      "api_key_env": "LLAMACPP_API_KEY"
+      "api_key_env": "LLAMACPP_API_KEY",
+      "name": "llama-server"
     }
   },
   "models": [
     {
-      "id": "gemma4-e4b",
-      "label": "Gemma 4 E4B",
-      "description": "Google Gemma 4 (effective 4B). Default for general chat.",
+      "id": "gemma4-e2b",
+      "label": "Gemma 4 E2B",
+      "description": "Google Gemma 4 (effective 2B, QAT). Fits a 6 GB GPU; 140+ languages including Hindi.",
+      "vendor": "Google",
+      "licence": "Apache-2.0",
+      "accent": "teal",
       "provider": "ollama",
-      "provider_model": "gemma4:e4b",
-      "system_prompt": "You are a helpful, concise assistant.",
+      "provider_model": "gemma4:e2b-it-qat",
+      "system_prompt": "You are Gemma 4 E2B, an AI model made by Google, running locally on this machine with no internet access. Be helpful and concise. Always reply in the language the user writes in.",
       "temperature": 0.7,
       "max_tokens": 1024
     },
     {
-      "id": "nemotron-nano-4b",
-      "label": "Nemotron 3 Nano 4B",
-      "description": "NVIDIA Nemotron 3 Nano 4B. Good for coding and step-by-step reasoning.",
+      "id": "llama3.2-3b",
+      "label": "Llama 3.2 3B",
+      "description": "Meta Llama 3.2 3B. Second vendor, to show the platform is not tied to one model.",
+      "vendor": "Meta",
+      "licence": "Llama 3.2 Community Licence",
+      "accent": "violet",
       "provider": "ollama",
-      "provider_model": "nemotron-3-nano:4b",
-      "system_prompt": "You are a precise assistant for programming and reasoning tasks. Put code in fenced blocks.",
-      "temperature": 0.6,
-      "max_tokens": 2048
+      "provider_model": "llama3.2:3b",
+      "system_prompt": "You are Llama 3.2 3B, an AI model made by Meta, running locally on this machine with no internet access. Be helpful and concise. Always reply in the language the user writes in.",
+      "temperature": 0.7,
+      "max_tokens": 1024
     }
   ]
 }

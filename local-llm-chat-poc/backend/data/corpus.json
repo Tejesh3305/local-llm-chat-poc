@@ -1,0 +1,95 @@
+{
+  "aliases": {
+    "casevac": "casualty evacuation",
+    "medevac": "casualty evacuation",
+    "helo": "helicopter",
+    "comms": "communications",
+    "frostbite": "cold injury",
+    "hotline": "emergency meeting",
+    "record": "personnel meeting",
+    "शीतदंश": "frostbite cold injury",
+    "ठंड": "cold injury",
+    "मौसम": "weather wind",
+    "हिमस्खलन": "avalanche",
+    "बर्फ": "snow",
+    "काफिला": "convoy",
+    "मार्ग": "axis convoy",
+    "रास्ता": "axis convoy",
+    "पुल": "bridge",
+    "वाहन": "vehicles",
+    "टैंक": "tanks",
+    "हताहत": "casualties evacuation",
+    "घायल": "casualties evacuation",
+    "निकासी": "evacuation",
+    "हेलीकॉप्टर": "helicopter",
+    "साइबर": "compromised net",
+    "संचार": "communications net",
+    "गश्त": "patrol",
+    "बैठक": "meeting",
+    "सीमा": "border",
+    "ईंधन": "fuel",
+    "राशन": "rations",
+    "रिज़र्व": "reserve"
+  },
+  "documents": [
+    {
+      "id": "SOP-W-12", "type": "SOP", "title": "Winter operations: cold injury prevention",
+      "text": "Commanders assess cold injury risk from the wind chill index, not from air temperature alone. When wind chill is below minus 28 degrees C, exposed skin can freeze within 30 minutes, and sentries and observation posts are relieved at fixed intervals. Below minus 40 degrees C the interval is halved. Scale B winter equipment is issued to all forward troops before first exposure. Heated shelter points with a medical orderly are set up at each company base. Frostbite cases are reported as non-battle casualties and evacuated as Cat B unless complications arise."
+    },
+    {
+      "id": "SOP-M-07", "type": "SOP", "title": "Convoy movement on snow-bound axes",
+      "text": "On snow-bound axes a probe team moves ahead of the main body, and snow-clearing teams open each chokepoint before the convoy is called forward. Convoy order is reconnaissance elements first, troop carriers next and the logistics tail last. Vehicles heavier than the lowest bridge classification on the axis are not routed on it. Movement is planned to finish in daylight; night legs need the formation commander's approval when cold injury risk is high. A fuel point is established to cover at least two round trips on the chosen axis."
+    },
+    {
+      "id": "ENG-52B", "type": "Engineer report", "title": "Bridge 52B load classification",
+      "text": "Bridge 52B on Axis Bravo was inspected and its load classification verified as Class 30. Single vehicles up to 30 tonnes may cross one at a time at walking pace. High-mobility vehicles, snow vehicles and infantry carriers are within the limit. Main battle tanks exceed it and are not to use the bridge. Deck ice is to be cleared before each convoy."
+    },
+    {
+      "id": "SOP-AV-05", "type": "SOP", "title": "Avalanche precautions",
+      "text": "Slopes between 30 and 45 degrees carry the highest avalanche risk after fresh snowfall. More than 30 cm of new snow in 24 hours raises the risk; more than 60 cm on such slopes puts them out of bounds until assessed. Routes below loaded slopes are crossed with probe teams leading and vehicles spaced out. Debris on an axis is cleared by engineer plant only after the slope above has been declared stable."
+    },
+    {
+      "id": "AVN-03", "type": "Aviation instruction", "title": "High-altitude helicopter operations",
+      "text": "Helicopter sorties in the sector need visibility of at least 1,500 m and wind not above 40 km/h at the landing zone. There is no night flying in the sector in winter. Casualty evacuation and resupply sorties are planned inside the forecast flying window. A casevac helicopter is pre-positioned at the forward base from first light. The landing zone is a cleared area of 50 m by 50 m marked with smoke."
+    },
+    {
+      "id": "SOP-MED-12", "type": "SOP", "title": "Casualty evacuation",
+      "text": "Casualties are sorted into Cat A (immediate, life-threatening), Cat B (urgent) and Cat C (routine). Cat A casualties are evacuated by helicopter to the field hospital whenever the flying window is open; outside it they move by road to the forward medical post. Cat B casualties move by road. Cat C casualties are treated at the company aid post and reviewed after 48 hours. Requests are sent as a 9-line MEDEVAC message on the casualty evacuation net and are authenticated."
+    },
+    {
+      "id": "SOP-OP-03", "type": "SOP", "title": "Patrolling, observation posts and reserves",
+      "text": "Area domination is kept up by platoon-strength patrols on each ridge axis. Observation posts are sited with overlapping arcs and each has a named fallback position. A reserve of at least one company is held at a base from which it can reach any axis within one hour. Reinforcement is requested when the enemy to own strength ratio in a sector goes above the figure set by the formation, or when a company falls below 80 per cent effective strength."
+    },
+    {
+      "id": "BPM 14/2024", "type": "BPM record", "title": "Border personnel meeting, 14 March 2024",
+      "meta": { "date": "14 March 2024", "issue": "Patrol overlap at Grid 47B", "outcome": "Alternating patrol dates; disengagement procedure agreed", "clause": "paragraph 4", "markers": "BRAVO-7 and CHARLIE-3" },
+      "text": "The PLA delegation raised patrol overlap in the Grid 47B area. Both sides agreed to alternate patrol dates in that area. Paragraph 4 records the agreed disengagement procedure: both patrols halt, display banners and withdraw to their own side of markers BRAVO-7 and CHARLIE-3. Either side may ask for a flag meeting within 48 hours of an incident."
+    },
+    {
+      "id": "BPM 22/2023", "type": "BPM record", "title": "Border personnel meeting, 9 December 2023",
+      "meta": { "date": "9 December 2023", "issue": "Forward movement after heavy snowfall", "outcome": "Accepted as a logistics move; advance notice by hotline in future" },
+      "text": "Forward movement by PLA elements after heavy snowfall was discussed. It was explained as a logistics move to relieve a snowed-in post and was accepted under the existing protocol, on condition that advance notice is given through the hotline in future."
+    },
+    {
+      "id": "BPM 07/2022", "type": "BPM record", "title": "Emergency border personnel meeting, 2 February 2022",
+      "meta": { "date": "2 February 2022", "issue": "Face-off near Grid 45", "outcome": "Resolved within six hours; both sides withdrew" },
+      "text": "The hotline was used to call an emergency meeting after a face-off near Grid 45. The meeting was held the same day and the matter was resolved within six hours. Both sides withdrew under the disengagement procedure and agreed to review marker positions at the next scheduled meeting."
+    },
+    {
+      "id": "PROTO-F", "type": "Protocol", "title": "Emergency meeting protocol, Annex F",
+      "text": "An emergency border personnel meeting may be requested through the hotline at any time. The 72-hour notice needed for scheduled meetings does not apply under the emergency clause. The request states the location, the time of the incident and the earlier meeting record relied on. The hotline is to be opened within 30 minutes of a confirmed crossing. The level of the interlocutor matches the seriousness of the incident, up to brigade commander."
+    },
+    {
+      "id": "SOP-CY-02", "type": "SOP", "title": "Communications compromise: immediate actions",
+      "text": "When a net or node is believed compromised, all stations stop using the affected net and move to the next net in the order primary, alternate, contingency, emergency. The Signal Officer activates COMSEC Plan BRAVO. Formation headquarters is told within five minutes on a net that is not affected. Compromised nodes are physically disconnected from the data network. Authentication codes are changed within 30 minutes, and all earlier traffic on the affected net is treated as read by the adversary."
+    },
+    {
+      "id": "SIG-04/2025", "type": "Standing order", "title": "Signals standing order 04/2025: restoring communications",
+      "text": "Communications are restored in this order: command net, casualty evacuation net, artillery net, logistics net, then administrative channels. Signal detachments are moved first to the relay carrying the active net. The satellite terminal is used only with the Commanding Officer's authority. An incident report is sent to DGIS within one hour of detection and updated every six hours until the primary net is restored."
+    },
+    {
+      "id": "LOG-0300", "type": "Logistics state", "title": "Logistics state as at 0300Z",
+      "text": "Infantry ammunition is held for 72 hours and artillery ammunition for 48 hours at current rates. Rations are held for 96 hours and fuel for 60 hours. Winter equipment is low: Scale B clothing is short for one company. Fuel stock at KILO base is 3,200 litres. Medical stores are adequate."
+    }
+  ]
+}

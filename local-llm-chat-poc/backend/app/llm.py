@@ -3,13 +3,20 @@
 Every local runtime used here (Ollama, llama.cpp, LM Studio, vLLM) speaks the
 OpenAI Chat Completions API, so one client type covers all of them. Switching
 models or runtimes is a change to models.json / .env only.
+
+Providers of type "ollama" get two extras through Ollama's own API: asking
+which model is in memory, and loading a model ahead of the first message.
 """
 
 import logging
 import os
+import re
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
+import httpx
 import openai
 from openai import AsyncOpenAI
 
@@ -41,24 +48,39 @@ class StreamResult:
     finish_reason: str | None = None
     input_tokens: int | None = None
     output_tokens: int | None = None
+    first_token_ms: int | None = None  # request sent -> first text
+    generation_ms: int | None = None  # first text -> end of the reply
+
+
+def _tag(name: str) -> str:
+    """Ollama treats 'llama3.2' and 'llama3.2:latest' as the same model."""
+    return (name if ":" in name else f"{name}:latest").lower()
 
 
 class ModelRegistry:
     def __init__(self, models_file: ModelsFile, timeout_seconds: float = 120):
         self.config = models_file
+        self.timeout_seconds = timeout_seconds
         self.clients: dict[str, AsyncOpenAI] = {}
+        self.native: dict[str, str] = {}  # provider id -> root of Ollama's own API
+        self.on_this_machine: set[str] = set()  # providers whose address is this computer
         for provider_id, provider in models_file.providers.items():
             base_url = os.getenv(provider.base_url_env, "").strip()
             if not base_url:
                 logger.info("provider '%s' skipped: %s is not set", provider_id, provider.base_url_env)
                 continue
+            if urlparse(base_url).hostname in ("127.0.0.1", "localhost", "::1"):
+                self.on_this_machine.add(provider_id)
             api_key = os.getenv(provider.api_key_env, "") if provider.api_key_env else ""
             self.clients[provider_id] = AsyncOpenAI(
                 base_url=base_url,
                 api_key=api_key or "not-needed",  # local runtimes ignore the key; the SDK requires a value
                 timeout=timeout_seconds,
-                max_retries=1,
+                max_retries=0,  # a local engine that refuses a connection is down; retrying only delays saying so
             )
+            if provider.type == "ollama":
+                self.native[provider_id] = re.sub(r"/v1$", "", base_url.rstrip("/"))
+        self._http = httpx.AsyncClient()  # one client for Ollama's own API; creating one per call is slow
 
     @property
     def default_model_id(self) -> str:
@@ -72,30 +94,92 @@ class ModelRegistry:
             raise ProviderNotConfiguredError(model.provider)
         return model
 
+    def runtime_name(self, model: ModelConfig) -> str:
+        """The model's name in the form the runtime reports it, for comparing with installed/loaded lists."""
+        return _tag(model.provider_model) if model.provider in self.native else model.provider_model
+
+    def _down(self, model: ModelConfig) -> str:
+        return f"Local engine not running. Start {self.config.providers[model.provider].name}."
+
+    def _missing(self, model: ModelConfig) -> str:
+        hint = f" Run: ollama pull {model.provider_model}" if model.provider in self.native else ""
+        return f"{model.label} is not installed on this machine.{hint}"
+
     async def installed_models(self) -> dict[str, set[str] | None]:
         """Per provider: the model names the runtime reports, or None if unreachable/not configured."""
         result: dict[str, set[str] | None] = {provider_id: None for provider_id in self.config.providers}
         for provider_id, client in self.clients.items():
             try:
                 page = await client.with_options(timeout=3, max_retries=0).models.list()
-                result[provider_id] = {model.id for model in page.data}
+                names = {model.id for model in page.data}
+                result[provider_id] = {_tag(name) for name in names} if provider_id in self.native else names
             except Exception as error:  # runtime down, wrong URL, etc.
                 logger.warning("provider '%s' unreachable: %s", provider_id, error)
         return result
 
+    async def loaded_models(self, reachable: set[str] | None = None) -> dict[str, dict[str, int | None] | None]:
+        """Per provider: the models in memory with the share of each on the GPU in percent. None if it cannot be asked.
+
+        Pass `reachable` to skip providers already known to be down.
+        """
+        result: dict[str, dict[str, int | None] | None] = {provider_id: None for provider_id in self.config.providers}
+        for provider_id, root in self.native.items():
+            if reachable is not None and provider_id not in reachable:
+                continue
+            try:
+                running = (await self._http.get(f"{root}/api/ps", timeout=3)).json().get("models", [])
+                result[provider_id] = {
+                    _tag(entry.get("model") or entry["name"]): round(100 * entry.get("size_vram", 0) / entry["size"]) if entry.get("size") else None
+                    for entry in running
+                }
+            except Exception as error:
+                logger.debug("provider '%s' did not report loaded models: %s", provider_id, error)
+        return result
+
+    async def load(self, model: ModelConfig) -> bool:
+        """Loads the model into memory ahead of the first message. False if the runtime has no way to ask for that."""
+        root = self.native.get(model.provider)
+        if root is None:
+            return False
+        try:
+            response = await self._http.post(f"{root}/api/generate", json={"model": model.provider_model, "stream": False}, timeout=self.timeout_seconds)
+        except httpx.HTTPError as error:
+            raise LLMError(self._down(model)) from error
+        if response.status_code == 404:
+            raise LLMError(self._missing(model))
+        if response.status_code >= 400:
+            logger.error("loading %s failed: HTTP %s %s", model.provider_model, response.status_code, response.text[:200])
+            raise LLMError(f"{model.label} could not be loaded into memory.")
+        return True
+
     async def stream_chat(
-        self, model: ModelConfig, messages: list[dict[str, str]], result: StreamResult
+        self,
+        model: ModelConfig,
+        messages: list[dict[str, str]],
+        result: StreamResult,
+        *,
+        system: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
     ) -> AsyncIterator[str]:
-        """Yields text chunks. Raises LLMError with a user-friendly message on failure."""
+        """Yields text chunks. Raises LLMError with a user-friendly message on failure.
+
+        `system`, `temperature` and `max_tokens` replace the model's own settings from models.json when given.
+        """
         client = self.clients[model.provider]
-        prompt = ([{"role": "system", "content": model.system_prompt}] if model.system_prompt else []) + messages
+        system_prompt = model.system_prompt if system is None else system
+        prompt = ([{"role": "system", "content": system_prompt}] if system_prompt else []) + messages
 
         options: dict = {}
-        if model.temperature is not None:
-            options["temperature"] = model.temperature
-        if model.max_tokens is not None:
-            options["max_tokens"] = model.max_tokens
+        temperature = model.temperature if temperature is None else temperature
+        max_tokens = model.max_tokens if max_tokens is None else max_tokens
+        if temperature is not None:
+            options["temperature"] = temperature
+        if max_tokens is not None:
+            options["max_tokens"] = max_tokens
 
+        started = time.perf_counter()
+        first: float | None = None
         try:
             stream = await client.chat.completions.create(
                 model=model.provider_model,
@@ -109,20 +193,23 @@ class ModelRegistry:
                     if chunk.choices:
                         choice = chunk.choices[0]
                         if choice.delta and choice.delta.content:
+                            if first is None:
+                                first = time.perf_counter()
+                                result.first_token_ms = round((first - started) * 1000)
                             yield choice.delta.content
                         if choice.finish_reason:
                             result.finish_reason = choice.finish_reason
                     if chunk.usage:
                         result.input_tokens = chunk.usage.prompt_tokens
                         result.output_tokens = chunk.usage.completion_tokens
+            if first is not None:
+                result.generation_ms = round((time.perf_counter() - first) * 1000)
         except openai.APIConnectionError as error:
             if isinstance(error, openai.APITimeoutError):
                 raise LLMError("The model took too long to respond. Try a shorter prompt or a smaller model.") from error
-            raise LLMError("The local model server is not reachable. Make sure Ollama (or your runtime) is running.") from error
+            raise LLMError(self._down(model)) from error
         except openai.NotFoundError as error:
-            raise LLMError(
-                f"Model '{model.provider_model}' is not installed in the runtime. Run: ollama pull {model.provider_model}"
-            ) from error
+            raise LLMError(self._missing(model)) from error
         except openai.APIStatusError as error:
             logger.error("runtime returned HTTP %s: %s", error.status_code, error.message)
             raise LLMError("The model failed to generate a response. Please try again.") from error

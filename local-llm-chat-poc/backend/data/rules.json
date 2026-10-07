@@ -1,0 +1,26 @@
+{
+  "cold": [
+    { "above": -10, "risk": "Low", "tone": "good", "frostbite": "Unlikely with normal winter clothing", "exposure_min": 240, "attrition_pct": 1 },
+    { "above": -28, "risk": "Moderate", "tone": "warn", "frostbite": "Possible on long exposure", "exposure_min": 180, "attrition_pct": 2 },
+    { "above": -40, "risk": "High", "tone": "warn", "frostbite": "Exposed skin can freeze in 10 to 30 minutes", "exposure_min": 120, "attrition_pct": 5 },
+    { "above": -48, "risk": "Very high", "tone": "bad", "frostbite": "Exposed skin can freeze in 5 to 10 minutes", "exposure_min": 60, "attrition_pct": 9 },
+    { "above": -55, "risk": "Severe", "tone": "bad", "frostbite": "Exposed skin can freeze in 2 to 5 minutes", "exposure_min": 30, "attrition_pct": 14 },
+    { "above": null, "risk": "Extreme", "tone": "bad", "frostbite": "Exposed skin can freeze in under 2 minutes", "exposure_min": 20, "attrition_pct": 20 }
+  ],
+  "rotation_benefit": 0.4,
+  "snow_speed": [
+    { "up_to_cm": 0, "factor": 1 },
+    { "up_to_cm": 20, "factor": 0.8 },
+    { "up_to_cm": 50, "factor": 0.7 },
+    { "up_to_cm": 80, "factor": 0.6 },
+    { "up_to_cm": null, "factor": 0.5 }
+  ],
+  "seats_per_vehicle": 10,
+  "aviation": { "min_vis_m": 1500, "max_wind_kmh": 40 },
+  "force": { "reinforce_above_ratio": 1.25, "reinforce_below_pct": 80 },
+  "bpm": {
+    "hotline_within_min": 30,
+    "level": { "Low": "Company commander", "Elevated": "Battalion commander", "High": "Brigade commander or above" }
+  },
+  "cyber": { "notify_min": 5, "isolate_min": 10, "codes_min": 30, "report_min": 60 }
+}

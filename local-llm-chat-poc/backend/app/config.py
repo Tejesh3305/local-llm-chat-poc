@@ -1,8 +1,9 @@
-"""Settings (from environment / .env) and the model catalogue (from models.json)."""
+"""Settings (from environment / .env), the model catalogue (models.json) and the workflow data (data/*.json)."""
 
 import json
 from functools import lru_cache
 from pathlib import Path
+from typing import Any, Literal
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, model_validator
@@ -23,6 +24,8 @@ class Settings(BaseSettings):
 
     models_config_path: str = "models.json"
     default_model: str | None = None
+    data_dir: str = "data"  # scenario.json, rules.json, corpus.json, prompts.json
+    frontend_dist: str = "../frontend/dist"  # served at / when it exists (after `npm run build`)
 
     cors_origins: str = "http://localhost:5173"  # comma-separated
 
@@ -39,14 +42,20 @@ class ProviderConfig(BaseModel):
     # Names of environment variables, never literal URLs or keys.
     base_url_env: str = Field(pattern=r"^[A-Z][A-Z0-9_]*$")
     api_key_env: str | None = Field(default=None, pattern=r"^[A-Z][A-Z0-9_]*$")
+    name: str = "the model server"  # shown in messages: "Local engine not running. Start Ollama."
+    # "ollama" also allows asking the runtime which model is in memory and loading one ahead of use.
+    type: Literal["openai", "ollama"] = "openai"
 
 
 class ModelConfig(BaseModel):
     id: str = Field(pattern=r"^[a-z0-9][a-z0-9._-]{0,63}$")  # public id used by the UI/API
     label: str
     description: str = ""
+    vendor: str = ""
+    licence: str = ""
+    accent: Literal["teal", "violet", "amber", "blue"] = "teal"  # colour that marks this model's replies
     provider: str  # key into "providers"
-    provider_model: str  # name the runtime expects, e.g. "gemma4:e4b"
+    provider_model: str  # name the runtime expects, e.g. "gemma4:e2b-it-qat"
     system_prompt: str | None = None
     temperature: float | None = Field(default=None, ge=0, le=2)
     max_tokens: int | None = Field(default=None, gt=0)
@@ -80,6 +89,30 @@ def load_models_file(path: str, default_override: str | None = None) -> ModelsFi
             raise ValueError(f"DEFAULT_MODEL '{default_override}' is not defined in {file_path}")
         models_file.default_model = default_override
     return models_file
+
+
+class BriefConfig(BaseModel):
+    enabled: bool = True  # false: the workflow has no model step and shows its standard-format brief
+    title: str
+    task: str
+
+
+class PromptsFile(BaseModel):
+    """data/prompts.json: what the model is asked to do at the end of a workflow, and in Chat with Corpus on."""
+
+    system: str
+    temperature: float = Field(default=0.2, ge=0, le=2)
+    max_tokens: int = Field(default=500, gt=0)
+    languages: dict[str, str] = Field(min_length=1)
+    briefs: dict[str, BriefConfig]
+    corpus_chat: str
+
+
+def load_data_file(data_dir: str, name: str) -> Any:
+    folder = Path(data_dir)
+    if not folder.is_absolute():
+        folder = BACKEND_DIR / folder
+    return json.loads((folder / name).read_text(encoding="utf-8"))
 
 
 @lru_cache

@@ -1,0 +1,47 @@
+{
+  "system": "You are {model}, working as a staff assistant on a planning exercise. Write only from the FACTS and REFERENCES in the message. Never invent or change a figure, time, place name, unit name or document number. If something is not given, leave it out. Use plain, brief, professional wording with no preamble.",
+  "temperature": 0.2,
+  "max_tokens": 500,
+  "languages": {
+    "English": "Write in English.",
+    "हिन्दी": "Write in Hindi in Devanagari script. Keep unit names, place names, grid references, times and document numbers exactly as given."
+  },
+  "briefs": {
+    "mobility": {
+      "enabled": true,
+      "title": "Movement brief",
+      "task": "Write a movement brief as five short bullet points: route and the reason for it, vehicles, timings, fuel, and the main risk."
+    },
+    "opplan": {
+      "enabled": true,
+      "title": "Commander's summary",
+      "task": "Write a commander's summary in at most 110 words: the force ratio and what it means, how the forward companies and the reserve are deployed, and whether reinforcement should be requested."
+    },
+    "tactical": {
+      "enabled": true,
+      "title": "Tactical assessment",
+      "task": "Write a tactical assessment in at most 120 words. State the recommended actions in priority order with one reason each, then the contingency in one sentence."
+    },
+    "weather": {
+      "enabled": true,
+      "title": "Weather brief",
+      "task": "Write a weather brief as four short bullet points: cold injury risk and the limit on exposed duty, avalanche risk by slope, the flying window, and one action for commanders."
+    },
+    "bpm": {
+      "enabled": true,
+      "title": "Hotline message",
+      "task": "Draft the hotline message to the counterpart formation requesting an emergency border personnel meeting. Use numbered paragraphs: what was observed, where and when; the earlier record relied on; the request. Keep it firm, courteous and under 130 words."
+    },
+    "casualty": {
+      "enabled": true,
+      "title": "Casualty brief",
+      "task": "Write a casualty brief in at most 110 words: who is evacuated how and by when, the effect on the unit's strength, and when reinforcement is needed."
+    },
+    "cyber": {
+      "enabled": true,
+      "title": "Incident report",
+      "task": "Write the incident report for formation headquarters in numbered paragraphs: what is compromised, the net now in use, actions with their deadlines, and the order of restoration. Under 130 words."
+    }
+  },
+  "corpus_chat": "You are {model}, a staff assistant for the exercise scenario below. Answer only from the SCENARIO and the EXTRACTS. Give the document number in square brackets when you use an extract. If the answer is not there, say so. Use at most 150 words. Reply in the language of the question."
+}

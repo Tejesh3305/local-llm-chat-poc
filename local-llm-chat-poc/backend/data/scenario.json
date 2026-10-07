@@ -1,0 +1,107 @@
+{
+  "name": "Op Himalayan Vigil",
+  "title": "High-altitude northern border, PLA ingress, winter conditions",
+  "as_of": "0412Z",
+
+  "weather": {
+    "temp_c": -27,
+    "wind_kmh": 25,
+    "snowfall_cm": 60,
+    "hourly": [
+      { "hour": 6, "vis_m": 200, "wind_kmh": 30 },
+      { "hour": 7, "vis_m": 400, "wind_kmh": 30 },
+      { "hour": 8, "vis_m": 900, "wind_kmh": 28 },
+      { "hour": 9, "vis_m": 2000, "wind_kmh": 25 },
+      { "hour": 10, "vis_m": 4000, "wind_kmh": 22 },
+      { "hour": 11, "vis_m": 5000, "wind_kmh": 20 },
+      { "hour": 12, "vis_m": 5000, "wind_kmh": 22 },
+      { "hour": 13, "vis_m": 3000, "wind_kmh": 26 },
+      { "hour": 14, "vis_m": 1200, "wind_kmh": 34 },
+      { "hour": 15, "vis_m": 600, "wind_kmh": 42 },
+      { "hour": 16, "vis_m": 300, "wind_kmh": 45 }
+    ]
+  },
+
+  "sectors": [
+    { "name": "Ridge Bravo, Sector 4", "slope_deg": 45, "snow_factor": 1.33 },
+    { "name": "Axis Alpha, Grid 47", "slope_deg": 38, "snow_factor": 1.2 },
+    { "name": "Axis Bravo, DELTA junction", "slope_deg": 28, "snow_factor": 1 }
+  ],
+
+  "routes": [
+    { "name": "Axis Alpha", "role": "Primary", "km": 28, "status": "blocked", "reason": "avalanche debris at Grid 47", "clearance_h": 8, "sector": "Axis Alpha, Grid 47", "bridge": "", "bridge_class_t": 70, "chokepoints": 0 },
+    { "name": "Axis Bravo", "role": "Alternate", "km": 78, "status": "open", "reason": "", "clearance_h": 0, "sector": "Axis Bravo, DELTA junction", "bridge": "Bridge 52B", "bridge_class_t": 30, "chokepoints": 3 }
+  ],
+  "movement": { "troops": 120, "departure": "05:30", "base_speed_kmh": 20, "clearing_min_per_chokepoint": 50, "fuel_stock_l": 3200, "litres_per_km": 0.6, "fuel_point": "KILO base" },
+  "vehicles": [
+    { "type": "High-mobility vehicle", "weight_t": 8 },
+    { "type": "Snow specialist vehicle", "weight_t": 6 },
+    { "type": "Infantry carrier", "weight_t": 14 },
+    { "type": "T-72 tank", "weight_t": 41 }
+  ],
+
+  "own": [
+    { "name": "Alpha Coy", "role": "forward", "at": "Grid 47B", "establishment": 120, "fit": 113 },
+    { "name": "Bravo Coy", "role": "forward", "at": "Ridge Axis Alpha", "establishment": 120, "fit": 120 },
+    { "name": "Charlie Coy", "role": "forward", "at": "Ridge Axis Bravo", "establishment": 120, "fit": 104 },
+    { "name": "Delta Coy", "role": "reserve", "at": "NOVEMBER base", "establishment": 120, "fit": 120, "km_to_axes": 9 }
+  ],
+  "enemy": { "strength": 480, "at": "Grid 47B", "forward_on": "Ridge Axis Bravo", "tripwire": "Grid 45" },
+  "assets": {
+    "special_forces": { "name": "Para SF detachment", "at": "LIMA forward base", "personnel": 12, "available": "yes" },
+    "artillery": { "name": "Artillery battery", "position": "Point SIERRA", "alternate": "Point YANKEE" },
+    "uav": { "name": "MALE UAV", "sector": "Grid 47 to 52", "revisit_min": 30 },
+    "observation_posts": ["Point SIERRA", "Point TANGO", "Point UNIFORM"],
+    "fallback_positions": ["LIMA", "MIKE"]
+  },
+
+  "casualties": { "unit": "Alpha Coy", "cat_a": 3, "cat_b": 0, "cat_c": 0, "time": "10:30" },
+  "medical": {
+    "helo": { "base": "LIMA forward base", "stretchers": 4, "notice_min": 10, "flight_min": 18, "load_min": 10, "to_hospital_min": 25 },
+    "hospital": "field hospital, LOMA base",
+    "road_post": "forward medical post",
+    "road_hours": 2.5,
+    "aid_post": "KILO base aid post",
+    "net": "net FOXTROT",
+    "marking": "Violet smoke"
+  },
+
+  "bpm": { "grid": "Grid 47B", "observed": "04:12", "escalation": "High" },
+
+  "comms": {
+    "nodes": ["KILO", "LIMA", "NOVEMBER", "POLARIS"],
+    "compromised": ["KILO", "LIMA"],
+    "detected": "04:12",
+    "signal_teams": 3,
+    "nets": [
+      { "name": "VHF Net ALPHA", "order": "Primary", "nodes": ["KILO", "LIMA"], "note": "" },
+      { "name": "HF Net NOVEMBER", "order": "Alternate", "nodes": ["NOVEMBER"], "note": "under COMSEC Plan BRAVO" },
+      { "name": "Satellite link POLARIS", "order": "Contingency", "nodes": ["POLARIS"], "note": "needs CO authorisation, 15 min to set up" },
+      { "name": "Runner relay and visual signal", "order": "Emergency", "nodes": [], "note": "code SUNRAY" }
+    ],
+    "restore_order": ["Command net", "Casualty evacuation net", "Artillery net", "Logistics net"]
+  },
+
+  "logistics": [
+    { "item": "Ammunition, infantry", "hours": 72 },
+    { "item": "Ammunition, artillery", "hours": 48 },
+    { "item": "Rations", "hours": 96 },
+    { "item": "Fuel", "hours": 60 },
+    { "item": "Winter equipment", "state": "Low" }
+  ],
+
+  "reports": [
+    { "time": "0412Z", "text": "PLA elements detected at Grid 47B, about one battalion.", "source": "Satellite", "urgent": true },
+    { "time": "0356Z", "text": "Forward elements advancing along Ridge Axis Bravo.", "source": "UAV", "urgent": true },
+    { "time": "0340Z", "text": "Visibility down to 200 m in the ridge sector.", "source": "Weather station" },
+    { "time": "0318Z", "text": "Bridge 52B load classification verified at 30 t.", "source": "Engineer report" },
+    { "time": "0300Z", "text": "Casevac helicopter on standby at LIMA.", "source": "Aviation" }
+  ],
+
+  "questions": [
+    "What is the frostbite risk for troops at Grid 47B tonight?",
+    "Which vehicles can cross Bridge 52B?",
+    "What does the 2024 meeting record say about patrols at Grid 47B?",
+    "ग्रिड 47B पर तैनात जवानों के लिए शीतदंश का खतरा कितना है?"
+  ]
+}

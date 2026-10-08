@@ -13,6 +13,10 @@
       "name": "llama-server"
     }
   },
+  "embedding": {
+    "provider": "ollama",
+    "provider_model": "nomic-embed-text"
+  },
   "models": [
     {
       "id": "gemma4-e4b",
@@ -26,7 +30,14 @@
       "system_prompt": "You are Gemma 4 E4B, an AI model made by Google, running locally on this machine with no internet access. Be helpful and concise. Always reply in the language the user writes in.",
       "temperature": 0.7,
       "max_tokens": 1024,
-      "thinking": false
+      "thinking": false,
+      "tags": ["vision"],
+      "use_cases": [
+        "General questions and everyday chat",
+        "Questions about uploaded documents",
+        "Briefs and workflow drafts",
+        "Summaries, letters and translation to Hindi"
+      ]
     },
     {
       "id": "nemotron-nano-4b",
@@ -40,7 +51,13 @@
       "system_prompt": "You are Nemotron 3 Nano 4B, an AI model made by NVIDIA, running locally on this machine with no internet access. Be helpful and concise. Always reply in the language the user writes in.",
       "temperature": 0.7,
       "max_tokens": 1024,
-      "thinking": false
+      "thinking": false,
+      "tags": ["code"],
+      "use_cases": [
+        "Writing and explaining code",
+        "Step-by-step reasoning",
+        "Quick answers: it is the smaller and faster model"
+      ]
     }
   ]
 }

@@ -1,4 +1,4 @@
-"""FastAPI application: routes for models, chat (streaming), workflows, the corpus and conversations."""
+"""FastAPI application: routes for models, chat (streaming), workflows, the corpus, conversations and documents."""
 
 import logging
 from collections.abc import AsyncIterable
@@ -6,24 +6,30 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Response
+import httpx
+from fastapi import Depends, FastAPI, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.sse import EventSourceResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import workflows
-from .config import BACKEND_DIR, ModelConfig, PromptsFile, get_settings, load_data_file, load_models_file
+from .config import AUTO_MODEL, BACKEND_DIR, ModelConfig, PromptsFile, get_settings, load_data_file, load_models_file
 from .corpus import Corpus, extracts, reference
+from .documents import SUPPORTED, DocumentError, DocumentLibrary, with_excerpts
 from .llm import LLMError, ModelRegistry, ProviderNotConfiguredError, StreamResult, UnknownModelError
+from .router import choose_model
 from .scenario import Scenario, digest, situation
 from .schemas import (
     ChatRequest,
     Conversation,
     ConversationSummary,
+    DocumentInfo,
     Message,
     ModelInfo,
     ModelsResponse,
+    RepositoryModel,
+    Source,
     SystemInfo,
     UpdateConversationRequest,
     WorkflowRequest,
@@ -38,7 +44,8 @@ registry = ModelRegistry(
     load_models_file(settings.models_config_path, settings.default_model),
     timeout_seconds=settings.request_timeout_seconds,
 )
-store = ConversationStore()
+store = ConversationStore(settings.database_path)
+library = DocumentLibrary(settings.database_path)
 
 # Workflow data. All of it is sample data for the exercise scenario; see data/*.json.
 base_scenario: Scenario = load_data_file(settings.data_dir, "scenario.json")
@@ -71,6 +78,10 @@ def get_registry() -> ModelRegistry:
 
 def get_store() -> ConversationStore:
     return store
+
+
+def get_library() -> DocumentLibrary:
+    return library
 
 
 def resolve_model(registry: ModelRegistry, model_id: str) -> ModelConfig:
@@ -136,6 +147,9 @@ async def list_models(registry: ModelRegistry = Depends(get_registry)):
                 available=name in (installed.get(m.provider) or set()),
                 loaded=None if in_memory is None else name in in_memory,
                 gpu_percent=in_memory.get(name) if in_memory else None,
+                thinking=m.thinking,
+                tags=m.tags,
+                use_cases=m.use_cases,
             )
         )
     return ModelsResponse(
@@ -163,6 +177,26 @@ async def load_model(model_id: str, registry: ModelRegistry = Depends(get_regist
         raise HTTPException(502, error.user_message)
 
 
+@app.get("/api/repository", response_model=list[RepositoryModel])
+async def repository(registry: ModelRegistry = Depends(get_registry)):
+    """Every model stored in the local runtimes, including ones this app's catalogue does not use."""
+    try:
+        stored = await registry.repository()
+    except (httpx.HTTPError, ValueError) as error:
+        logger.warning("the runtime did not list its models: %s", error)
+        raise HTTPException(503, "Local engine not running, so its stored models cannot be listed.")
+    embedding = registry.config.embedding
+    # Ollama reports names with a tag; "nomic-embed-text" means "nomic-embed-text:latest".
+    embedding_name = embedding and (embedding.provider_model if ":" in embedding.provider_model else f"{embedding.provider_model}:latest").lower()
+    result = []
+    for item in stored:
+        entry = next((m for m in registry.config.models if m.provider == item["provider"] and registry.runtime_name(m) == item["name"]), None)
+        is_embedding = embedding is not None and embedding.provider == item["provider"] and item["name"] == embedding_name
+        role = "chat" if entry else "embedding" if is_embedding else "unused"
+        result.append(RepositoryModel(**item, role=role, catalogue_id=entry.id if entry else None))
+    return sorted(result, key=lambda m: (m.role == "unused", m.name))
+
+
 # ---------- chat ----------
 
 
@@ -172,11 +206,14 @@ class ChatContext:
     model: ModelConfig
     message: str
     thinking: bool | None = None  # None: use the model's default
+    use_documents: bool = False  # answer from the uploaded documents
+    document_ids: list[str] | None = None  # only these documents; None = all of them
+    route_reason: str | None = None  # set when the Auto choice picked the model
     system: str | None = None  # replaces the model's own system prompt when Corpus is on
     sources: list[dict] | None = None  # the documents found, when Corpus is on
 
 
-def prepare_chat(
+async def prepare_chat(
     body: ChatRequest,
     registry: ModelRegistry = Depends(get_registry),
     store: ConversationStore = Depends(get_store),
@@ -188,13 +225,30 @@ def prepare_chat(
     # An unknown id is treated as a new conversation (e.g. the first turn failed before it was saved).
     conversation = store.get(body.conversation_id) if body.conversation_id else None
 
-    # Model resolution: request > conversation > default
-    model_id = body.model or (conversation.model if conversation else registry.default_model_id)
-    model = resolve_model(registry, model_id)
+    route_reason = None
+    if body.model == AUTO_MODEL:
+        installed = await registry.installed_models()
+        usable = [
+            m
+            for m in registry.config.models
+            # A provider that does not answer is not ruled out here: the chat reports that error itself.
+            if m.provider in registry.clients and (installed.get(m.provider) is None or registry.runtime_name(m) in installed[m.provider])
+        ]
+        if not usable:
+            raise HTTPException(503, "None of the models in the catalogue is installed. See GET /api/models.")
+        model, route_reason = choose_model(usable, registry.default_model_id, body.message)
+    else:
+        # Model resolution: request > conversation > default
+        model_id = body.model or (conversation.model if conversation else registry.default_model_id)
+        model = resolve_model(registry, model_id)
 
     if conversation is None:
         conversation = store.new(model.id, body.conversation_id)
-    context = ChatContext(conversation=conversation, model=model, message=body.message, thinking=body.thinking)
+    context = ChatContext(
+        conversation=conversation, model=model, message=body.message,
+        thinking=body.thinking, use_documents=body.use_documents or bool(body.document_ids),
+        document_ids=body.document_ids or None, route_reason=route_reason,
+    )
 
     if body.grounded:
         scenario = scenario_for(body.inputs)
@@ -213,20 +267,31 @@ async def chat(
     ctx: ChatContext = Depends(prepare_chat),
     registry: ModelRegistry = Depends(get_registry),
     store: ConversationStore = Depends(get_store),
+    library: DocumentLibrary = Depends(get_library),
 ) -> AsyncIterable[dict]:
-    """Streams Server-Sent Events: start -> delta... -> done (or error)."""
+    """Streams Server-Sent Events: start -> (excerpts) -> delta... -> done (or error)."""
     start = {"type": "start", "conversation_id": ctx.conversation.id, "model": ctx.model.id}
+    if ctx.route_reason:
+        start["route_reason"] = ctx.route_reason
     if ctx.sources is not None:
         start["sources"] = ctx.sources
     yield start
 
     keep = settings.max_history_messages if ctx.system is None else GROUNDED_HISTORY_MESSAGES
-    history = [{"role": m.role, "content": m.content} for m in ctx.conversation.messages]
-    history = history[-keep:] + [{"role": "user", "content": ctx.message}]
+    history = [{"role": m.role, "content": m.content} for m in ctx.conversation.messages][-keep:]
 
     parts: list[str] = []
+    excerpts: list[Source] = []
     result = StreamResult()
     try:
+        question = ctx.message
+        if ctx.use_documents:
+            excerpts = await library.search(ctx.message, registry.embed, settings.document_excerpts, ctx.document_ids)
+            if excerpts:
+                yield {"type": "excerpts", "excerpts": [excerpt.model_dump() for excerpt in excerpts]}
+                question = with_excerpts(ctx.message, excerpts)
+        history.append({"role": "user", "content": question})
+
         async with registry.slot:  # one model in memory, so one generation at a time
             await registry.activate(ctx.model)
             async for text in registry.stream_chat(ctx.model, history, result, system=ctx.system, thinking=ctx.thinking):
@@ -239,10 +304,14 @@ async def chat(
     finally:
         # Also runs when the user presses Stop (client disconnect): keep the partial answer.
         if parts:
+            picked = [doc.filename for doc in library.documents() if doc.id in ctx.document_ids] if ctx.document_ids else []
             store.add_turn(
                 ctx.conversation,
-                Message(role="user", content=ctx.message),
-                Message(role="assistant", content="".join(parts), model=ctx.model.id),
+                Message(role="user", content=ctx.message, documents=picked),
+                Message(
+                    role="assistant", content="".join(parts), model=ctx.model.id, route_reason=ctx.route_reason,
+                    grounded=ctx.system is not None, sources=ctx.sources, excerpts=excerpts, stats=stats(result),
+                ),
             )
 
     yield {"type": "done", **stats(result)}
@@ -296,7 +365,9 @@ def prepare_run(workflow_id: str, body: WorkflowRequest, registry: ModelRegistry
     language = body.language or next(iter(prompts.languages))
     if language not in prompts.languages:
         raise HTTPException(400, f"Unknown language '{language}'. Choose one of: {', '.join(prompts.languages)}.")
-    model = resolve_model(registry, body.model or registry.default_model_id) if prompts.briefs[workflow.id].enabled else None
+    # Auto is a chat choice; a workflow draft goes to the default model.
+    model_id = body.model if body.model and body.model != AUTO_MODEL else registry.default_model_id
+    model = resolve_model(registry, model_id) if prompts.briefs[workflow.id].enabled else None
     return RunContext(workflow, scenario, workflows.run(workflow, scenario, rules, corpus), model, language)
 
 
@@ -340,10 +411,7 @@ def list_corpus():
 
 @app.get("/api/conversations", response_model=list[ConversationSummary])
 def list_conversations(store: ConversationStore = Depends(get_store)):
-    return [
-        ConversationSummary(id=c.id, title=c.title, model=c.model, message_count=len(c.messages), updated_at=c.updated_at)
-        for c in store.list()
-    ]
+    return store.summaries()
 
 
 @app.get("/api/conversations/{conversation_id}", response_model=Conversation)
@@ -369,6 +437,7 @@ def update_conversation(
         conversation.model = resolve_model(registry, body.model).id
     if body.title:
         conversation.title = body.title
+    store.update(conversation)
     return conversation
 
 
@@ -376,6 +445,41 @@ def update_conversation(
 def delete_conversation(conversation_id: str, store: ConversationStore = Depends(get_store)):
     if not store.delete(conversation_id):
         raise HTTPException(404, "Conversation not found.")
+    return Response(status_code=204)
+
+
+# ---------- uploaded documents ----------
+
+
+@app.get("/api/documents", response_model=list[DocumentInfo])
+def list_documents(library: DocumentLibrary = Depends(get_library)):
+    return library.documents()
+
+
+@app.post("/api/documents", response_model=DocumentInfo, status_code=201)
+async def upload_document(
+    file: UploadFile, registry: ModelRegistry = Depends(get_registry), library: DocumentLibrary = Depends(get_library)
+):
+    """Read the file, split it into pieces and store their embeddings for document search."""
+    filename = (file.filename or "document").replace("\\", "/").rsplit("/", 1)[-1][:200]
+    if not filename.lower().endswith(SUPPORTED):
+        raise HTTPException(400, f"Unsupported file type. Upload one of: {', '.join(SUPPORTED)}")
+    data = await file.read(settings.max_upload_mb * 1024 * 1024 + 1)
+    if len(data) > settings.max_upload_mb * 1024 * 1024:
+        raise HTTPException(413, f"The file is larger than {settings.max_upload_mb} MB.")
+    try:
+        return await library.add(filename, data, registry.embed)
+    except DocumentError as error:
+        raise HTTPException(400, str(error))
+    except LLMError as error:
+        logger.warning("embedding failed for '%s': %s", filename, error.__cause__ or error)
+        raise HTTPException(503, error.user_message)
+
+
+@app.delete("/api/documents/{document_id}", status_code=204)
+def delete_document(document_id: str, library: DocumentLibrary = Depends(get_library)):
+    if not library.delete(document_id):
+        raise HTTPException(404, "Document not found.")
     return Response(status_code=204)
 
 

@@ -10,9 +10,12 @@ from fastapi.testclient import TestClient
 
 from app import workflows
 from app.config import ModelsFile
+from app.documents import DocumentLibrary, split_text
 from app.llm import LLMError, ModelRegistry, StreamResult
-from app.main import app, base_scenario, corpus, get_registry, get_store, rules
+from app.main import app, base_scenario, corpus, get_library, get_registry, get_store, rules
+from app.router import choose_model
 from app.scenario import casualty_model, comms_model, force_model, mobility_model, weather_model
+from app.schemas import Message
 from app.store import ConversationStore
 
 MODELS = {
@@ -20,8 +23,9 @@ MODELS = {
     "providers": {"local": {"base_url_env": "TEST_LLM_BASE_URL"}},
     "models": [
         {"id": "general", "label": "General", "provider": "local", "provider_model": "gemma4:e4b", "thinking": False},
-        {"id": "coder", "label": "Coder", "provider": "local", "provider_model": "nemotron-3-nano:4b"},
+        {"id": "coder", "label": "Coder", "provider": "local", "provider_model": "nemotron-3-nano:4b", "tags": ["code"]},
     ],
+    "embedding": {"provider": "local", "provider_model": "nomic-embed-text"},
 }
 
 
@@ -35,11 +39,16 @@ class FakeOllama:
     async def get(self, url, **_):
         if self.down:
             raise httpx.ConnectError("refused")
+        if url.endswith("/api/tags"):  # everything stored on disk
+            stored = ["gemma4:e4b", "nomic-embed-text:latest", "other-tool:1b"]
+            return httpx.Response(200, json={"models": [{"name": name, "size": 500, "details": {"parameter_size": "4B"}} for name in stored]})
         return httpx.Response(200, json={"models": [{"name": name, "size": 100, "size_vram": 100} for name in self.loaded]})
 
     async def post(self, url, json, **_):
         if self.down:
             raise httpx.ConnectError("refused")
+        if url.endswith("/api/show"):
+            return httpx.Response(200, json={"capabilities": ["completion"], "model_info": {"gemma4.context_length": 8192}})
         (self.loaded.discard if json.get("keep_alive") == 0 else self.loaded.add)(json["model"])
         return httpx.Response(200, json={"done": True})
 
@@ -72,13 +81,19 @@ class FakeRegistry(ModelRegistry):
         result.finish_reason = "stop"
         result.output_tokens = 2
 
+    async def embed(self, texts, kind="document"):
+        """Fake vectors: one dimension per topic word, so texts about the same topic are similar."""
+        topics = ["leave", "salary", "travel", "security"]
+        return [[1.0 if topic in text.lower() else 0.01 for topic in topics] for text in texts]
+
 
 @pytest.fixture
 def setup(monkeypatch):
     monkeypatch.setenv("TEST_LLM_BASE_URL", "http://fake/v1")
-    registry, store = FakeRegistry(), ConversationStore()
+    registry, store, library = FakeRegistry(), ConversationStore(), DocumentLibrary()
     app.dependency_overrides[get_registry] = lambda: registry
     app.dependency_overrides[get_store] = lambda: store
+    app.dependency_overrides[get_library] = lambda: library
     yield TestClient(app), registry, store
     app.dependency_overrides.clear()
 
@@ -239,7 +254,7 @@ def test_runtime_error_is_streamed_and_nothing_saved(setup, monkeypatch):
     registry.fail_with = "Local engine not running. Start Ollama."
     stream = events(client.post("/api/chat", json={"message": "hi"}))
     assert stream[-1] == {"type": "error", "message": "Local engine not running. Start Ollama."}
-    assert store.list() == []
+    assert store.summaries() == []
 
 
 def test_conversation_crud(setup):
@@ -249,6 +264,141 @@ def test_conversation_crud(setup):
     assert client.get(f"/api/conversations/{conversation_id}").json()["title"] == "hello"
     assert client.delete(f"/api/conversations/{conversation_id}").status_code == 204
     assert client.get(f"/api/conversations/{conversation_id}").status_code == 404
+
+
+# ---------- chat history ----------
+
+
+def test_conversations_survive_a_restart(tmp_path):
+    path = str(tmp_path / "chat.db")
+    store = ConversationStore(path)
+    conversation = store.new("general")
+    store.add_turn(conversation, Message(role="user", content="hello"), Message(role="assistant", content="hi", model="general"))
+
+    reopened = ConversationStore(path)  # a new process would open the same file
+    assert [c.title for c in reopened.summaries()] == ["hello"]
+    assert [m.content for m in reopened.get(conversation.id).messages] == ["hello", "hi"]
+
+
+def test_a_saved_chat_keeps_what_the_live_one_showed(setup):
+    client, _, _ = setup
+    stream = events(client.post("/api/chat", json={"message": "Which vehicles can cross Bridge 52B?", "grounded": True, "model": "auto"}))
+    saved = client.get(f"/api/conversations/{stream[0]['conversation_id']}").json()["messages"][1]
+    assert saved["grounded"] and saved["sources"][0]["id"] == "ENG-52B"
+    assert saved["route_reason"] == "general question" and saved["stats"]["output_tokens"] == 2
+
+
+def test_rename_is_saved(setup):
+    client, _, store = setup
+    conversation_id = events(client.post("/api/chat", json={"message": "hello"}))[0]["conversation_id"]
+    client.patch(f"/api/conversations/{conversation_id}", json={"title": "Greeting"})
+    assert store.get(conversation_id).title == "Greeting"
+    assert client.get("/api/conversations").json()[0]["message_count"] == 2
+
+
+# ---------- automatic model choice ----------
+
+
+def test_auto_picks_a_model_by_rule():
+    general, coder = ModelsFile.model_validate(MODELS).models
+    assert choose_model([general, coder], "general", "Fix this Python function") == (coder, "programming question")
+    assert choose_model([general, coder], "general", "What is the capital of France?") == (general, "general question")
+    assert choose_model([general], "general", "Fix this Python function") == (general, "general question")  # no code model usable
+
+
+def test_auto_only_uses_installed_models(setup):
+    client, _, _ = setup
+    # "coder" would be the rule's choice, but it is not installed.
+    start = events(client.post("/api/chat", json={"message": "Write a Python script", "model": "auto"}))[0]
+    assert (start["model"], start["route_reason"]) == ("general", "general question")
+    assert events(client.post("/api/workflows/weather/run", json={"model": "auto"}))[1]["model"] == "general"
+
+
+# ---------- uploaded documents ----------
+
+
+def upload(client, name: str, text: str):
+    return client.post("/api/documents", files={"file": (name, text.encode(), "text/plain")})
+
+
+def test_answers_use_the_matching_document(setup):
+    client, registry, store = setup
+    assert upload(client, "leave.txt", "Annual leave is 30 days per year.").status_code == 201
+    assert upload(client, "travel.txt", "Travel must be booked through the transport office.").status_code == 201
+    assert [d["filename"] for d in client.get("/api/documents").json()] == ["travel.txt", "leave.txt"]
+
+    stream = events(client.post("/api/chat", json={"message": "How much leave do I get?", "use_documents": True}))
+    assert [e["type"] for e in stream] == ["start", "excerpts", "delta", "delta", "done"]
+    assert stream[1]["excerpts"][0]["filename"] == "leave.txt"
+    sent = registry.prompts[-1][-1]["content"]
+    assert "Annual leave is 30 days" in sent and sent.endswith("Question: How much leave do I get?")
+
+    saved = store.get(stream[0]["conversation_id"]).messages
+    assert saved[0].content == "How much leave do I get?"  # the question is stored as typed, without the excerpts
+    assert saved[1].excerpts[0].filename == "leave.txt"
+
+
+def test_a_question_can_name_the_documents_to_answer_from(setup):
+    client, registry, _ = setup
+    upload(client, "leave.txt", "Annual leave is 30 days per year.")
+    travel_id = upload(client, "travel.txt", "Travel must be booked through the transport office.").json()["id"]
+
+    # A leave question, but only travel.txt was picked: leave.txt must not be used. Picking documents is enough to turn them on.
+    stream = events(client.post("/api/chat", json={"message": "How much leave do I get?", "document_ids": [travel_id]}))
+    assert [e["filename"] for e in stream[1]["excerpts"]] == ["travel.txt"]
+    assert "Annual leave" not in registry.prompts[-1][-1]["content"]
+    saved = client.get(f"/api/conversations/{stream[0]['conversation_id']}").json()["messages"][0]
+    assert saved["documents"] == ["travel.txt"]  # a reopened chat shows which documents were picked
+
+    gone = events(client.post("/api/chat", json={"message": "How much leave do I get?", "document_ids": ["0" * 32]}))
+    assert [e["type"] for e in gone] == ["start", "delta", "delta", "done"]  # a removed document: answered without excerpts
+
+
+def test_documents_are_not_used_unless_asked(setup):
+    client, registry, _ = setup
+    upload(client, "leave.txt", "Annual leave is 30 days per year.")
+    stream = events(client.post("/api/chat", json={"message": "How much leave do I get?"}))
+    assert [e["type"] for e in stream] == ["start", "delta", "delta", "done"]
+    assert registry.prompts[-1][-1]["content"] == "How much leave do I get?"
+
+
+def test_document_upload_errors_and_delete(setup):
+    client, _, _ = setup
+    assert upload(client, "virus.exe", "x").status_code == 400
+    assert upload(client, "empty.txt", "   ").status_code == 400
+    document_id = upload(client, "notes.md", "Security briefing notes.").json()["id"]
+    assert client.delete(f"/api/documents/{document_id}").status_code == 204
+    assert client.delete(f"/api/documents/{document_id}").status_code == 404
+    assert client.get("/api/documents").json() == []
+
+
+def test_long_text_is_split_into_overlapping_pieces():
+    pieces = split_text("This is a sentence about travel. " * 200)
+    assert len(pieces) > 5 and all(len(piece) <= 900 for piece in pieces)
+    assert pieces[1][:40] in pieces[0] + pieces[1]
+
+
+# ---------- AI Library ----------
+
+
+def test_models_describe_themselves_for_the_library(setup):
+    client, _, _ = setup
+    general, coder = client.get("/api/models").json()["models"]
+    assert (general["thinking"], general["tags"]) == (False, []) and (coder["thinking"], coder["tags"]) == (None, ["code"])
+
+
+def test_repository_lists_stored_models_and_their_role(setup):
+    client, registry, _ = setup
+    assert client.get("/api/repository").json() == []  # this runtime cannot be asked
+    registry.use_ollama({"gemma4:e4b"})
+    stored = {m["name"]: m for m in client.get("/api/repository").json()}
+    assert {name: m["role"] for name, m in stored.items()} == {"gemma4:e4b": "chat", "nomic-embed-text:latest": "embedding", "other-tool:1b": "unused"}
+    chat_model = stored["gemma4:e4b"]
+    assert chat_model["catalogue_id"] == "general" and chat_model["loaded"] and chat_model["context_length"] == 8192
+    assert (chat_model["parameters"], chat_model["capabilities"]) == ("4B", ["completion"])
+
+    registry.use_ollama(set(), down=True)
+    assert client.get("/api/repository").status_code == 503
 
 
 def test_models_file_validation():

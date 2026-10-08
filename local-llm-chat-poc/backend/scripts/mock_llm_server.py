@@ -92,7 +92,21 @@ async def chat(request: Request):
     return StreamingResponse(events(), media_type="text/event-stream")
 
 
+@app.post("/v1/embeddings")
+async def embeddings(request: Request):
+    """Crude vectors (one dimension per letter), enough for document upload and search to work."""
+    texts = (await request.json())["input"]
+    texts = [texts] if isinstance(texts, str) else texts
+    vectors = [[float(text.lower().count(chr(code))) + 0.01 for code in range(ord("a"), ord("z") + 1)] for text in texts]
+    return {"object": "list", "data": [{"object": "embedding", "index": i, "embedding": v} for i, v in enumerate(vectors)]}
+
+
 # ---------- the parts of Ollama's own API the backend uses ----------
+
+
+@app.get("/api/tags")
+def stored():
+    return {"models": [{"name": m, "size": 3_000_000_000, "details": {"parameter_size": "4B", "quantization_level": "Q4_K_M", "family": "mock"}} for m in MODELS]}
 
 
 @app.get("/api/ps")

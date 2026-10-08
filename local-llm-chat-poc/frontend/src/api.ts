@@ -1,4 +1,9 @@
-import type { Doc, InputValue, ModelsResponse, Situation, WorkflowResult, WorkflowsResponse } from './types';
+import type {
+  ConversationSummary, Doc, DocumentInfo, InputValue, ModelsResponse, RepositoryModel, Situation, StoredConversation, WorkflowResult, WorkflowsResponse,
+} from './types';
+
+/** Sent as the model id to let the backend pick a model for each message. */
+export const AUTO = 'auto';
 
 // Empty = same origin (the Vite proxy forwards /api to the backend in development).
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '');
@@ -43,6 +48,38 @@ export const fetchModels = async (): Promise<ModelsResponse> => (await request('
 /** Asks the runtime to load a model into memory ahead of the first message. */
 export const loadModel = async (id: string): Promise<{ loaded: boolean }> =>
   (await request(`/api/models/${encodeURIComponent(id)}/load`, { method: 'POST' })).json();
+
+/** Every model stored in the local runtime, with its size, format and what it can do. */
+export const fetchRepository = async (): Promise<RepositoryModel[]> => (await request('/api/repository')).json();
+
+// ---------- saved chats ----------
+
+export const fetchConversations = async (): Promise<ConversationSummary[]> => (await request('/api/conversations')).json();
+
+export const fetchConversation = async (id: string): Promise<StoredConversation> => (await request(`/api/conversations/${id}`)).json();
+
+export const renameConversation = async (id: string, title: string): Promise<void> => {
+  await request(`/api/conversations/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }) });
+};
+
+export const deleteConversation = async (id: string): Promise<void> => {
+  await request(`/api/conversations/${id}`, { method: 'DELETE' });
+};
+
+// ---------- uploaded documents ----------
+
+export const fetchDocuments = async (): Promise<DocumentInfo[]> => (await request('/api/documents')).json();
+
+/** Sends a PDF, DOCX or text file; the backend splits it and stores it for document search. */
+export const uploadDocument = async (file: File): Promise<DocumentInfo> => {
+  const form = new FormData();
+  form.append('file', file);
+  return (await request('/api/documents', { method: 'POST', body: form })).json();
+};
+
+export const deleteDocument = async (id: string): Promise<void> => {
+  await request(`/api/documents/${id}`, { method: 'DELETE' });
+};
 
 export const fetchWorkflows = async (): Promise<WorkflowsResponse> => (await request('/api/workflows')).json();
 

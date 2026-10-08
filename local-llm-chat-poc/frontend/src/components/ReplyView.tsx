@@ -99,6 +99,7 @@ export const ReplyView = memo(function ReplyView({ reply, onRetry, onOpenDoc }: 
         <span className="dot" />
         <span className="who-name">{reply.model.label}</span>
         <span className="who-vendor">{reply.model.vendor}</span>
+        {reply.routeReason && <span className="tag" title="Auto chose this model for the message">Auto · {reply.routeReason}</span>}
       </div>
       <div className="wait" hidden={!waiting}>{waiting && <Waiting reply={reply} />}</div>
       <Markdown text={reply.content} />
@@ -108,6 +109,17 @@ export const ReplyView = memo(function ReplyView({ reply, onRetry, onOpenDoc }: 
       </div>
       {reply.sources && reply.content && (
         <Refs label="Sources" refs={reply.sources} none="No document matched this question." onOpen={onOpenDoc} />
+      )}
+      {!!reply.excerpts?.length && reply.content && (
+        <div className="excerpts">
+          <span className="refs-label">From your documents</span>
+          {reply.excerpts.map((excerpt, index) => (
+            <details key={`${excerpt.document_id}-${excerpt.position}`} className="excerpt">
+              <summary><b>[{index + 1}]</b><span>{excerpt.filename}</span><small>part {excerpt.position}</small></summary>
+              <p>{excerpt.text}</p>
+            </details>
+          ))}
+        </div>
       )}
       <div className="meta" hidden={!finished}>
         {finished && (

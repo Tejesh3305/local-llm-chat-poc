@@ -19,6 +19,25 @@ export interface ModelInfo {
   available: boolean;
   loaded: boolean | null; // null: the runtime cannot be asked what is in memory
   gpu_percent: number | null;
+  thinking: boolean | null; // default for the Think switch; null: the model has no such switch
+  tags: string[]; // 'vision', 'code'
+  use_cases: string[];
+}
+
+/** A model stored in the local runtime, whether or not the catalogue uses it. */
+export interface RepositoryModel {
+  name: string;
+  provider: string;
+  size_bytes: number | null;
+  parameters: string | null;
+  quantization: string | null;
+  family: string | null;
+  context_length: number | null;
+  capabilities: string[];
+  loaded: boolean;
+  memory_bytes: number | null;
+  role: 'chat' | 'embedding' | 'unused';
+  catalogue_id: string | null;
 }
 
 export interface ModelsResponse {
@@ -39,6 +58,54 @@ export interface Doc extends DocRef {
   text: string;
 }
 
+// ---------- uploaded documents ----------
+
+export interface DocumentInfo {
+  id: string;
+  filename: string;
+  size_bytes: number;
+  chunks: number;
+  created_at: string;
+}
+
+/** A piece of an uploaded document that was given to the model for an answer. */
+export interface Excerpt {
+  document_id: string;
+  filename: string;
+  position: number;
+  text: string;
+  score: number;
+}
+
+// ---------- saved chats ----------
+
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  model: string;
+  message_count: number;
+  updated_at: string;
+}
+
+export interface StoredMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  model: string | null;
+  documents: string[]; // user message: the documents picked with @, by file name
+  route_reason: string | null;
+  grounded: boolean;
+  sources: DocRef[] | null;
+  excerpts: Excerpt[];
+  stats: Partial<Stats> | null;
+}
+
+export interface StoredConversation {
+  id: string;
+  title: string;
+  model: string;
+  messages: StoredMessage[];
+}
+
 // ---------- streaming ----------
 
 export interface Stats {
@@ -51,7 +118,8 @@ export interface Stats {
 
 // Server-Sent Events sent by POST /api/chat
 export type ChatEvent =
-  | { type: 'start'; conversation_id: string; model: string; sources?: DocRef[] }
+  | { type: 'start'; conversation_id: string; model: string; sources?: DocRef[]; route_reason?: string }
+  | { type: 'excerpts'; excerpts: Excerpt[] }
   | { type: 'delta'; text: string }
   | ({ type: 'done' } & Stats)
   | { type: 'error'; message: string };
@@ -159,4 +227,6 @@ export interface Reply {
   approx: boolean;
   cut: boolean;
   sources?: DocRef[];
+  routeReason?: string; // why the Auto choice picked this model
+  excerpts?: Excerpt[]; // pieces of the uploaded documents that were used
 }

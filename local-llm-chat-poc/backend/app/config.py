@@ -11,6 +11,9 @@ from pydantic_settings import BaseSettings
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
+# Sent as the model id to let the backend pick a model for each message.
+AUTO_MODEL = "auto"
+
 # Load backend/.env into os.environ. Variables already set in the real
 # environment win, because load_dotenv does not override by default.
 load_dotenv(BACKEND_DIR / ".env")
@@ -26,16 +29,29 @@ class Settings(BaseSettings):
     default_model: str | None = None
     data_dir: str = "data"  # scenario.json, rules.json, corpus.json, prompts.json
     frontend_dist: str = "../frontend/dist"  # served at / when it exists (after `npm run build`)
+    # Folder for the SQLite file that holds the saved chats and the uploaded documents.
+    storage_dir: str = "storage"
 
     cors_origins: str = "http://localhost:5173"  # comma-separated
 
     request_timeout_seconds: float = 120
     max_message_chars: int = 16_000
     max_history_messages: int = 40
+    max_upload_mb: int = 20
+    # How many excerpts of the uploaded documents are sent to the model with a question
+    document_excerpts: int = 4
 
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def database_path(self) -> str:
+        folder = Path(self.storage_dir)
+        if not folder.is_absolute():
+            folder = BACKEND_DIR / folder
+        folder.mkdir(parents=True, exist_ok=True)
+        return str(folder / "chat.db")
 
 
 class ProviderConfig(BaseModel):
@@ -65,23 +81,40 @@ class ModelConfig(BaseModel):
     # Off is much faster for everyday questions; the UI can turn it on per message.
     # Leave unset for models/runtimes without a thinking switch.
     thinking: bool | None = None
+    # What the model is good at. "vision" = can read images,
+    # "code" = preferred by the Auto choice for programming questions.
+    tags: list[Literal["vision", "code"]] = []
+    # Shown in the AI Library: what to use this model for.
+    use_cases: list[str] = []
+
+
+class EmbeddingConfig(BaseModel):
+    """The model that turns the text of uploaded documents into vectors for document search."""
+
+    provider: str
+    provider_model: str  # e.g. "nomic-embed-text"
 
 
 class ModelsFile(BaseModel):
     default_model: str
     providers: dict[str, ProviderConfig]
     models: list[ModelConfig] = Field(min_length=1)
+    embedding: EmbeddingConfig | None = None
 
     @model_validator(mode="after")
     def check_references(self) -> "ModelsFile":
         ids = [model.id for model in self.models]
         if len(ids) != len(set(ids)):
             raise ValueError("model ids must be unique")
+        if AUTO_MODEL in ids:
+            raise ValueError(f"'{AUTO_MODEL}' is reserved for the automatic model choice")
         for model in self.models:
             if model.provider not in self.providers:
                 raise ValueError(f"model '{model.id}' uses unknown provider '{model.provider}'")
         if self.default_model not in ids:
             raise ValueError(f"default_model '{self.default_model}' is not in models")
+        if self.embedding and self.embedding.provider not in self.providers:
+            raise ValueError(f"embedding uses unknown provider '{self.embedding.provider}'")
         return self
 
 

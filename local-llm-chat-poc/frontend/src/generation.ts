@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import type { ModelInfo, Reply, Stats } from './types';
+import type { ModelInfo, Reply, Stats, StoredMessage } from './types';
 
 /*
  * Only one reply is generated at a time: the engine serves one request at a time,
@@ -76,6 +76,18 @@ export function finish(reply: Reply, stats: Partial<Stats>) {
   if (reply.tokens && stats.generation_ms) reply.tokensPerSec = reply.tokens / (stats.generation_ms / 1000);
   else estimateSpeed(reply);
   reply.rev++;
+}
+
+/** A reply from a saved chat, shown as it was when it finished. */
+export function storedReply(model: ModelInfo, message: StoredMessage): Reply {
+  const reply = newReply(model);
+  reply.cold = false;
+  reply.content = message.content;
+  reply.sources = message.sources ?? undefined;
+  reply.routeReason = message.route_reason ?? undefined;
+  reply.excerpts = message.excerpts;
+  finish(reply, message.stats ?? {});
+  return reply;
 }
 
 export function fail(reply: Reply, message: string) {

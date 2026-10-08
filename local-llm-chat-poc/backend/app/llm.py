@@ -176,6 +176,66 @@ class ModelRegistry:
             raise LLMError(f"{model.label} could not be loaded into memory.")
         return True
 
+    async def repository(self) -> list[dict]:
+        """Every model stored in the Ollama runtimes: size, details, what it can do, and whether it is in memory.
+
+        Raises httpx.HTTPError when a runtime does not answer.
+        """
+        result: list[dict] = []
+        for provider_id, root in self.native.items():
+            tags = (await self._http.get(f"{root}/api/tags", timeout=5)).json().get("models", [])
+            running = (await self._http.get(f"{root}/api/ps", timeout=5)).json().get("models", [])
+            in_memory = {_tag(entry.get("model") or entry["name"]): entry for entry in running}
+
+            async def describe(model: dict, root: str = root, provider_id: str = provider_id, in_memory: dict = in_memory) -> dict:
+                name = _tag(model["name"])
+                details = model.get("details") or {}
+                capabilities, context_length = [], None
+                try:  # "show" is the only call that lists capabilities (completion, vision, tools, embedding...)
+                    show = (await self._http.post(f"{root}/api/show", json={"model": model["name"]}, timeout=10)).json()
+                    capabilities = show.get("capabilities") or []
+                    # The key carries the architecture name, e.g. "gemma4.context_length".
+                    info = show.get("model_info") or {}
+                    context_length = next((v for k, v in info.items() if k.endswith(".context_length")), None)
+                except (httpx.HTTPError, ValueError):
+                    pass
+                return {
+                    "name": name,
+                    "provider": provider_id,
+                    "size_bytes": model.get("size"),
+                    "parameters": details.get("parameter_size"),
+                    "quantization": details.get("quantization_level"),
+                    "family": details.get("family"),
+                    "context_length": context_length,
+                    "capabilities": capabilities,
+                    "loaded": name in in_memory,
+                    "memory_bytes": in_memory.get(name, {}).get("size"),
+                }
+
+            result += await asyncio.gather(*(describe(model) for model in tags))
+        return result
+
+    async def embed(self, texts: list[str], kind: str = "document") -> list[list[float]]:
+        """One vector per text, from the embedding model in models.json. `kind` is "document" or "query"."""
+        embedding = self.config.embedding
+        if embedding is None or embedding.provider not in self.clients:
+            raise LLMError('Document search is not set up: add an "embedding" model to models.json.')
+        # nomic-embed-text is trained with these prefixes; they noticeably improve search results.
+        if "nomic" in embedding.provider_model:
+            texts = [f"search_{kind}: {text}" for text in texts]
+        try:
+            response = await self.clients[embedding.provider].embeddings.create(model=embedding.provider_model, input=texts)
+        except openai.APIConnectionError as error:
+            raise LLMError(f"Local engine not running. Start {self.config.providers[embedding.provider].name}.") from error
+        except openai.NotFoundError as error:
+            raise LLMError(
+                f"The embedding model '{embedding.provider_model}' is not installed. Run: ollama pull {embedding.provider_model}"
+            ) from error
+        except openai.APIStatusError as error:
+            logger.error("embedding failed with HTTP %s: %s", error.status_code, error.message)
+            raise LLMError("The document text could not be processed. Please try again.") from error
+        return [item.embedding for item in sorted(response.data, key=lambda item: item.index)]
+
     async def activate(self, model: ModelConfig) -> None:
         """Make `model` the only catalogue model in memory. Call while holding `slot`.
 

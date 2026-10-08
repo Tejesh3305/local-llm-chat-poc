@@ -5,10 +5,27 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
+class Source(BaseModel):
+    """An excerpt of an uploaded document that was given to the model for an answer."""
+
+    document_id: str
+    filename: str
+    position: int  # which piece of the document (1 = first)
+    text: str
+    score: float  # similarity to the question, 0..1
+
+
 class Message(BaseModel):
     role: Literal["user", "assistant"]
     content: str
     model: str | None = None  # which model wrote an assistant message
+    # The rest is kept so a reopened chat shows what the live one did.
+    documents: list[str] = []  # user message: the documents picked with @, by file name
+    route_reason: str | None = None  # why the Auto choice picked this model
+    grounded: bool = False  # answered with Corpus on
+    sources: list[dict] | None = None  # the corpus documents found, when Corpus was on
+    excerpts: list[Source] = []  # the excerpts of uploaded documents that were used
+    stats: dict | None = None  # the figures of the "done" event
 
 
 class Conversation(BaseModel):
@@ -33,8 +50,13 @@ class ChatRequest(BaseModel):
     # Omit to start a new conversation; the server returns its id in the "start" event.
     # Send that id back on the next turn to continue the conversation.
     conversation_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
-    # Public model id from GET /api/models. Omit to use the conversation's model or the default.
+    # Public model id from GET /api/models, or "auto" to let the server choose.
+    # Omit to use the conversation's model or the default.
     model: str | None = Field(default=None, max_length=64)
+    # Answer from the uploaded documents: the most relevant excerpts are added to the question.
+    use_documents: bool = False
+    # Answer only from these uploaded documents (ids from GET /api/documents). Implies use_documents.
+    document_ids: list[str] = Field(default_factory=list, max_length=20)
     # Corpus on: answer from the scenario and the documents found for this message, and report the sources.
     grounded: bool = False
     # Workflow input values to apply to the scenario first (see GET /api/workflows). Only used when grounded.
@@ -63,12 +85,40 @@ class ModelInfo(BaseModel):
     available: bool  # True when the runtime reports the model as installed
     loaded: bool | None  # in memory now; None when the runtime cannot be asked
     gpu_percent: int | None  # share of the loaded model on the GPU
+    thinking: bool | None  # default for the Think switch; None when the model has no such switch
+    tags: list[str]
+    use_cases: list[str]
 
 
 class ModelsResponse(BaseModel):
     default_model: str
     models: list[ModelInfo]
     providers: dict[str, Literal["ok", "unreachable", "not_configured"]]
+
+
+class DocumentInfo(BaseModel):
+    id: str
+    filename: str
+    size_bytes: int
+    chunks: int
+    created_at: str
+
+
+class RepositoryModel(BaseModel):
+    """A model stored in the local runtime, whether or not this app's catalogue uses it."""
+
+    name: str
+    provider: str
+    size_bytes: int | None = None
+    parameters: str | None = None  # e.g. "7.5B"
+    quantization: str | None = None  # e.g. "Q4_K_M"
+    family: str | None = None
+    context_length: int | None = None  # the most tokens the model can read at once
+    capabilities: list[str] = []
+    loaded: bool = False
+    memory_bytes: int | None = None  # memory in use while loaded
+    role: Literal["chat", "embedding", "unused"] = "unused"  # how this app uses it
+    catalogue_id: str | None = None
 
 
 class SystemInfo(BaseModel):

@@ -7,6 +7,9 @@ __pycache__/
 node_modules/
 dist/
 
+# Saved chats and uploaded documents
+backend/storage/
+
 # Secrets / local config
 .env
 !.env.example

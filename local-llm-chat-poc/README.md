@@ -7,10 +7,25 @@ Browser (React)  ──►  FastAPI backend  ──►  Ollama on this machine
   frontend/             backend/app/          gemma4:e4b, nemotron-3-nano:4b
 ```
 
-The page has two views, switched at the top left:
+The page has three views, switched at the top left:
 
 - **Chat**: talk to either model and switch between them mid-conversation. The **Corpus** button makes the model answer from the scenario and the sample documents, and lists its sources.
 - **Workflows**: the seven outputs of the illustrative scenario (mobility, operational plan, tactical recommendation, weather, BPM, casualty, cyber).
+- **AI Library**: what each model is for, what it can do and its specifications, plus every model stored in Ollama.
+
+## Chat features
+
+| Feature | Where | What it does |
+|---|---|---|
+| Chat history | Left rail, **Chats** | Every chat is saved after its first reply and survives a restart. Click one to reopen and continue it; rename or delete it from the row. |
+| Your documents | **Attach**, then **Documents** | Attach a PDF, DOCX, TXT or MD file. With **Documents** on, the parts of your files closest to the question are given to the model, and the reply lists the parts it used. Files are listed, and removed, in the left rail. |
+| Pick documents | Type **@** in the message box | Lists your uploaded documents; keep typing to filter, ↑/↓ and Enter (or a click) to pick. The picked documents appear as chips, and only they are searched for that one question. Backspace in an empty box removes the last chip; Esc closes the list. The question in the chat shows which documents were picked. |
+| Think | **Think** | Lets the model reason before answering: slower, better for multi-step problems. Shown for models with `"thinking"` set in `models.json`. |
+| Auto | Model menu, **Auto** | The backend picks the model for each message: programming questions go to the model tagged `code`, everything else to the default model. The reply says which rule applied. Only installed models are picked. |
+
+Chats and uploaded documents are stored in `backend/storage/chat.db` (SQLite). Delete that file to start clean. Document search needs the embedding model named under `"embedding"` in `models.json`: `ollama pull nomic-embed-text`.
+
+**Corpus** and **Documents** are different sources: Corpus is the scenario's sample documents (keyword search, fixed), Documents are the files you attach (embedding search).
 
 ## Running it
 
@@ -114,19 +129,21 @@ Interactive docs: http://127.0.0.1:8000/docs
 |---|---|---|
 | `GET` | `/api/models` | The models, whether each is installed and in memory, and each provider's status |
 | `POST` | `/api/models/{id}/load` | Load a model into memory ahead of use, unloading the catalogue's other models first |
-| `POST` | `/api/chat` | Send a message; streams the reply. `grounded: true` answers from the corpus and reports sources; `thinking` overrides the model's default |
+| `POST` | `/api/chat` | Send a message; streams the reply. `grounded: true` answers from the corpus and reports sources; `use_documents: true` answers from the uploaded documents, `document_ids` from only those; `model: "auto"` lets the backend choose; `thinking` overrides the model's default |
 | `GET` | `/api/workflows` | The workflows with their inputs, the situation, the languages |
 | `POST` | `/api/workflows/{id}/compute` | Calculations and references only, for given input values |
 | `POST` | `/api/workflows/{id}/run` | Streams the calculations, then the model's draft |
 | `GET` | `/api/corpus` | The sample documents |
+| `GET` `POST` `DELETE` | `/api/documents`, `/api/documents/{id}` | The uploaded documents: list, add (multipart `file`), remove |
+| `GET` `PATCH` `DELETE` | `/api/conversations`, `/api/conversations/{id}` | The saved chats: list, read, rename, delete |
+| `GET` | `/api/repository` | Every model stored in Ollama, with size, format, context length and capabilities |
 | `GET` | `/api/health` | Each provider's status, and whether the model servers are on this machine, the local network or elsewhere |
-| `GET` | `/api/conversations…` | As before |
 
 The speed figures under each reply are measured by the backend: **First word** is from sending the request to the runtime until its first text (so it includes a model load), and **Speed** is output tokens over the time from first text to last.
 
 ## What has been checked
 
-- `pytest` in `backend/`: 35 tests covering the calculations, the search, every workflow, the model step, Corpus chat, model loading and unloading, and the thinking option. None needs a model.
+- `pytest` in `backend/`: 46 tests covering the calculations, the search, every workflow, the model step, Corpus chat, model loading and unloading, the thinking option, saved chats, uploaded documents, the Auto choice and the model repository. None needs a model.
 - `npm run build` in `frontend/`: type-check and production build.
 - End to end in Chrome 154 and Edge 154 against the mock runtime, through the backend: chat, model switching, Stop, Retry, a stopped runtime, a model that is not installed, Corpus chat with sources, all seven workflows, live recalculation, a workflow with its model step off.
 

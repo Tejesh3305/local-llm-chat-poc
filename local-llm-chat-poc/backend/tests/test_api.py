@@ -453,6 +453,45 @@ def test_chat_converts_a_picked_document_to_word(setup):
     assert registry.calls == []
 
 
+def test_convert_it_uses_the_previous_answer(setup):
+    import io
+    import zipfile
+
+    client, registry, _ = setup
+    first = events(client.post("/api/chat", json={"message": "tell me the types of indian tanks"}))
+    cid = first[0]["conversation_id"]   # the fake model answers "[gemma4:e4b] reply"
+
+    deck = events(client.post("/api/chat", json={"message": "convert it into ppt", "conversation_id": cid}))
+    assert deck[-2]["type"] == "file" and deck[-2]["file"]["format"] == "pptx"
+    sent = registry.prompts[-1]
+    assert len(sent) == 1 and "SOURCE (an earlier answer)\n[gemma4:e4b] reply" in sent[0]["content"]   # the answer is the content
+    assert "Write only the content" in sent[0]["content"]
+
+    # Again, naming the topic: the tank answer is used, not the deck just made
+    again = events(client.post("/api/chat", json={"message": "convert above tank information into ppt", "conversation_id": cid}))
+    assert again[-2]["file"]["format"] == "pptx"
+    assert "SOURCE (an earlier answer)\n[gemma4:e4b] reply" in registry.prompts[-1][0]["content"]
+
+    word = events(client.post("/api/chat", json={"message": "convert this into a word file", "conversation_id": cid}))
+    made = word[-2]["file"]
+    assert made["filename"] == "Indian-tanks.docx" and "Indian tanks" in word[1]["text"]
+    with zipfile.ZipFile(io.BytesIO(client.get(f"/api/files/{made['id']}").content)) as archive:
+        assert "reply" in archive.read("word/document.xml").decode()
+
+    # A new topic in the same chat is not the previous answer
+    events(client.post("/api/chat", json={"message": "make a powerpoint about cat breeds", "conversation_id": cid}))
+    assert registry.prompts[-1][-1]["content"].endswith("for this request: make a powerpoint about cat breeds")
+
+
+def test_file_helpers():
+    from app.main import strip_preamble, title_from
+
+    assert strip_preamble("It appears there is a misunderstanding. I cannot create a .ppt file.\n\n# Indian Tanks\n## MBT\n- Arjun") == "# Indian Tanks\n## MBT\n- Arjun"
+    assert strip_preamble("## No title\n- point") == "## No title\n- point"
+    assert title_from("tell me all the type of indian tanks") == "Indian tanks"
+    assert title_from("What is the capital of France?") == "Capital of France"
+
+
 def test_chat_writes_a_deck_with_the_model(setup):
     client, registry, _ = setup
     document_id = upload(client, "orders.txt", "Convoy departs at 0530 h from the transit camp.").json()["id"]

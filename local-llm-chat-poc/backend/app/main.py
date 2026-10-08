@@ -405,6 +405,47 @@ def picked_texts(ctx: ChatContext, library: DocumentLibrary) -> list[tuple[str, 
     return [(doc.id, doc.filename, library.text(doc.id) or "") for doc in library.documents() if doc.id in ctx.document_ids]
 
 
+FILE_HISTORY_MESSAGES = 6  # earlier turns sent with a file request, for context
+
+
+def earlier_answer(conversation: Conversation, topic: tuple[str, ...]) -> tuple[str, str] | None:
+    """The earlier answer a file request means, and the question it answered.
+
+    Answers that were themselves files or pictures are skipped ("convert it into ppt" twice must not turn the
+    first deck into the second). When the request names a topic ("the tank information"), the latest answer
+    that mentions it is used; otherwise the latest answer.
+    """
+    pairs = []
+    for index, message in enumerate(conversation.messages):
+        if message.role == "assistant" and not message.files and message.content.strip():
+            question = next((m.content for m in reversed(conversation.messages[:index]) if m.role == "user"), "")
+            pairs.append((question, message.content))
+    if not pairs:
+        return None
+    if topic:
+        stems = [word.rstrip("s") for word in topic if len(word) > 2]
+        scored = [(sum(stem in (q + " " + a).lower() for stem in stems), i) for i, (q, a) in enumerate(pairs)]
+        best = max(scored)
+        if best[0] > 0:
+            return pairs[best[1]]
+    return pairs[-1]
+
+
+def title_from(question: str) -> str:
+    """A file title from the question an answer replied to: 'tell me all the type of indian tanks' -> 'Indian tanks'."""
+    text = re.sub(r"\s+", " ", question).strip(" ?.!")
+    text = re.sub(r"^(please\s+)?(tell me|explain|describe|give me|list|what are|what is|show me)\s+(about\s+)?(all\s+)?(the\s+)?", "", text, flags=re.I)
+    text = re.sub(r"^(types?|kinds?)\s+of\s+", "", text, flags=re.I) if len(text.split()) > 3 else text
+    return (text[:1].upper() + text[1:70]) if text else "Chat answer"
+
+
+def strip_preamble(markdown: str) -> str:
+    """Drop chatter a model puts before the document itself ("Sure, here is…", "I cannot create a .ppt file…")."""
+    lines = markdown.splitlines()
+    first = next((i for i, line in enumerate(lines) if line.startswith("# ")), None)
+    return "\n".join(lines[first:]).strip() if first else markdown.strip()
+
+
 def file_sources(ctx: ChatContext, library: DocumentLibrary) -> list[tuple[str, str, str]]:
     """The documents a file request is about: only those picked with @ (or, for API callers, use_documents).
 
@@ -427,14 +468,12 @@ async def file_turn(
     """
     request = ctx.file
     sources = file_sources(ctx, library)
-    earlier = next((m.content for m in reversed(ctx.conversation.messages) if m.role == "assistant"), None)
+    earlier = earlier_answer(ctx.conversation, request.topic) if request.refers_back or request.mentions_answer else None
     if sources:
         name = ", ".join(filename for _, filename, _ in sources)
         text = sources[0][2] if len(sources) == 1 else "\n\n".join(f"## {filename}\n\n{body}" for _, filename, body in sources)
         default_title = actions.stem(sources[0][1])
-    elif request.mentions_answer and earlier:
-        name, text, default_title = "the previous answer", earlier, "Chat answer"
-    elif request.mentions_document:
+    elif request.mentions_document and not request.mentions_answer:
         # "Convert the given doc", but no document was picked: ask, instead of guessing which one
         first = next(iter(library.documents()), None)
         tip = (
@@ -447,6 +486,9 @@ async def file_turn(
         store.add_turn(ctx.conversation, Message(role="user", content=ctx.message), Message(role="assistant", content=tip, model=ctx.model.id))
         yield {"type": "done", **stats(StreamResult())}
         return
+    elif earlier:
+        # "convert it into ppt": an answer given earlier in this chat is the content
+        name, text, default_title = "an earlier answer", earlier[1], title_from(earlier[0])
     else:
         name, text, default_title = None, None, ""
     copy = request.as_is and bool(text)
@@ -467,24 +509,32 @@ async def file_turn(
         reply = (
             f"Here is **{name}** as a {request.label}: about {words:,} words. "
             "The text is copied as it is; pictures, tables and the original page layout are not carried over."
-            if sources else f"Here is {name} as a {request.label}."
+            if sources else f"Here is the earlier answer about **{default_title}** as a {request.label}."
         )
         yield {"type": "delta", "text": reply}
     else:
         kind = studio.DRAFT_KINDS["briefing" if request.format == "pptx" else "report"]
+        # The model only writes the text; it must not answer that it "cannot create a .ppt file"
+        rules = (
+            f"The app turns your text into a {request.label} automatically. Write only the content, in Markdown, "
+            "starting with '# ' and a title. No introduction, no notes about files or formats, no remarks about what you can or cannot do."
+        )
         if text:
             ask = (
-                f"{ctx.message}\n\nWrite it as {kind}. Base it only on the source below and do not add facts that are not in it.\n\n"
-                f"SOURCE ({name})\n{text[:WHOLE_DOCUMENT_CHARS]}"
+                f"{rules}\n\nThe user asked: \"{ctx.message}\". Write {kind}, based only on the source below; "
+                f"do not add facts that are not in it.\n\nSOURCE ({name})\n{text[:WHOLE_DOCUMENT_CHARS]}"
             )
+            recent = []  # the source is the context; earlier turns (an older deck, say) would only confuse
         else:
-            ask = f"Write {kind} for this request: {ctx.message}"
+            ask = f"{rules}\n\nWrite {kind} for this request: {ctx.message}"
+            # The recent turns, so "the second one" or "that tank" in the request still make sense
+            recent = [{"role": m.role, "content": m.content} for m in ctx.conversation.messages][-FILE_HISTORY_MESSAGES:]
         parts: list[str] = []
         try:
             async with registry.slot:
                 await registry.activate(ctx.model)
                 async for piece in registry.stream_chat(
-                    ctx.model, [{"role": "user", "content": ask}], result, system=studio.DRAFT_SYSTEM, temperature=0.4, max_tokens=1800
+                    ctx.model, recent + [{"role": "user", "content": ask}], result, system=studio.DRAFT_SYSTEM, temperature=0.4, max_tokens=1800
                 ):
                     parts.append(piece)
                     yield {"type": "delta", "text": piece}
@@ -492,7 +542,7 @@ async def file_turn(
             logger.warning("file request failed (model=%s): %s", ctx.model.id, error.__cause__ or error)
             yield {"type": "error", "message": error.user_message}
             return
-        content = reply = "".join(parts)
+        content = reply = strip_preamble("".join(parts))
         if not content.strip():
             yield {"type": "error", "message": "The model returned no text to put in the file. Please try again."}
             return

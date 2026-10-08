@@ -11,21 +11,31 @@ from pathlib import Path
 
 from .studio import FORMATS
 
-ACTION = re.compile(r"\b(create|crate|make|generate|convert|export|turn|save|build|prepare|produce|draft|write|give me|need|want)\b", re.I)
+ACTION = re.compile(r"\b(create|crate|make|generate|convert|export|turn|save|build|prepare|produce|draft|write|give me|need|want|put|download)\b", re.I)
 # Copy the text across as it is, instead of having the model write something new
 AS_IS = re.compile(r"\b(convert|export|save|turn|change|transform|copy)\b", re.I)
 REWRITE = re.compile(r"\b(summar\w*|brief\w*|key points|short\w*|outline|highlights|overview|translate\w*|notes)\b", re.I)
 
 FORMAT_WORDS = {
-    "pptx": re.compile(r"\b(power\s?point|pptx?|slides?|slide\s?deck|deck|presentation)\b", re.I),
-    "docx": re.compile(r"\.?\bdocx?\b|\bms[- ]?word\b|\bword\s*(doc|docs|document|file|format)s?\b|\b(in|to|as|into)\s+(a\s+)?word\b|\.word\b", re.I),
+    "pptx": re.compile(r"\b(power\s?point|pptx?|slides?|slide\s?deck|deck|presentation)(\s+(file|format|version|deck))?\b", re.I),
+    "docx": re.compile(
+        r"\.?\bdocx?\b|\bms[- ]?word\b|\b((in|to|as|into)\s+(a\s+)?)?word\s*(doc|docs|document|file|format)s?\b|\b(in|to|as|into)\s+(a\s+)?word\b|\.word\b", re.I
+    ),
     # Not ".pdf": "Liam_Dao.pdf" is the name of the source, not a request for a PDF
-    "pdf": re.compile(r"\b(to|as|into|in|a|an|new)\s+pdf\b|\bpdf\s*(file|report|document|version|format)\b", re.I),
+    "pdf": re.compile(r"\b(to|as|into|in|a|an|new)\s+pdf(\s*(file|report|document|version|format))?\b|\bpdf\s*(file|report|document|version|format)\b", re.I),
 }
 # Said about an uploaded document ("the given doc", "this file") once the format words are taken out.
 # Only used to ask which document is meant: a document is read only when it is picked with @.
 DOCUMENT_WORDS = re.compile(r"\b(docs?|documents?|files?|given|attached|uploaded|pdf|resume|cv)\b", re.I)
 EARLIER_ANSWER = re.compile(r"\b(above|previous|last (answer|reply|response)|your (answer|reply|response)|this (answer|reply|response|chat|conversation))\b", re.I)
+# Points back at something said earlier in the chat: "convert it", "make a ppt of this", "same as a pdf"
+REFERS_BACK = re.compile(r"\b(it|this|that|these|those|them|above|same|previous|earlier|answer|reply|response|chat|conversation|info|information)\b", re.I)
+# Words that carry no topic of their own: "convert into ppt", "make a pdf please"
+FILLER = set(
+    "a an the into to in as of for on me us please can could would will you i we now one new also and or "
+    "create crate make generate convert export turn save build prepare produce draft write give need want change transform copy "
+    "file files format version deck doc docs info information details data content text".split()
+)
 
 FORMAT_LABELS = {"pdf": "PDF", "docx": "Word document", "pptx": "PowerPoint deck"}
 
@@ -36,6 +46,8 @@ class FileRequest:
     as_is: bool  # copy the source text unchanged; otherwise the model writes the content
     mentions_document: bool  # the message talks about a document ("the given doc")
     mentions_answer: bool  # the message talks about an earlier answer ("the above")
+    refers_back: bool = False  # "convert it into ppt": about what was said before, not a new topic
+    topic: tuple[str, ...] = ()  # the words naming what the file is about ("tank" in "convert the tank info into ppt")
 
     @property
     def label(self) -> str:
@@ -53,10 +65,14 @@ def file_request(message: str) -> FileRequest | None:
     for pattern in FORMAT_WORDS.values():
         rest = pattern.sub(" ", rest)
     mentions_document, mentions_answer = bool(DOCUMENT_WORDS.search(rest)), bool(EARLIER_ANSWER.search(message))
+    # The words that say what the file is about, if anything: "convert it into ppt" has none, so it means the last answer;
+    # "tell me about cat breeds and make a ppt for it" has its own topic, so "it" is that topic.
+    topic = [word for word in re.findall(r"[a-z']+", rest.lower()) if word not in FILLER and not REFERS_BACK.fullmatch(word)]
+    refers_back = mentions_answer or not topic or (bool(REFERS_BACK.search(rest)) and len(topic) <= 2)
     # "Convert it", or "a Word doc of the given doc": the same text in another format. A summary, notes and
     # the like are written by the model, and so is a deck: a document copied onto slides as it is reads badly.
-    as_is = fmt != "pptx" and not REWRITE.search(message) and bool(AS_IS.search(message) or mentions_document or mentions_answer)
-    return FileRequest(fmt, as_is, mentions_document, mentions_answer)
+    as_is = fmt != "pptx" and not REWRITE.search(message) and bool(AS_IS.search(message) or mentions_document or refers_back)
+    return FileRequest(fmt, as_is, mentions_document, mentions_answer, refers_back, tuple(topic))
 
 
 PICTURE_VERBS = ("create", "generate", "make", "draw", "paint", "sketch", "render", "design", "produce", "imagine")

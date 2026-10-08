@@ -7,6 +7,7 @@ import { DocDialog, StatusDialog, type DocTarget } from './components/Dialogs';
 import { Icon } from './components/icons';
 import { LibraryView } from './components/LibraryView';
 import { autoRule, ModelPicker } from './components/ModelPicker';
+import { StudioView } from './components/StudioView';
 import { WorkflowsView } from './components/WorkflowsView';
 import { BRAND } from './config';
 import { generation, useGenerating } from './generation';
@@ -14,11 +15,12 @@ import type { ConversationSummary, DocumentInfo, ModelInfo, ModelsResponse } fro
 import { useChat } from './useChat';
 import { useWorkflows } from './useWorkflows';
 
-type View = 'chat' | 'flows' | 'library';
+type View = 'chat' | 'flows' | 'studio' | 'library';
 
 const VIEWS: { view: View; label: string; hash: string }[] = [
   { view: 'chat', label: 'Chat', hash: '' },
   { view: 'flows', label: 'Workflows', hash: '#workflows' },
+  { view: 'studio', label: 'AI Studio', hash: '#studio' },
   { view: 'library', label: 'AI Library', hash: '#library' },
 ];
 
@@ -250,6 +252,10 @@ export function App() {
         onDeleteDocument={id => void deleteDocument(id).then(refreshDocuments, fail)}
       />
       <WorkflowsView hidden={view !== 'flows'} flows={flows} model={selected} generating={generating} onOpenDoc={setDoc} onBrowse={() => setDoc('')} />
+      <StudioView
+        hidden={view !== 'studio'} model={selected} models={models} generating={generating}
+        documents={documents} uploading={uploading} onUpload={file => void upload(file)}
+      />
       <LibraryView hidden={view !== 'library'} models={models} />
 
       <DocDialog target={doc} onShow={setDoc} />

@@ -7,6 +7,10 @@ python-dotenv==1.2.4
 httpx==0.28.1
 python-multipart==0.0.32
 pypdf==6.19.0
+# AI Studio: the files it generates
+fpdf2==2.8.9
+python-docx==1.2.0
+python-pptx==1.0.2
 
 # tests
 pytest==9.1.1

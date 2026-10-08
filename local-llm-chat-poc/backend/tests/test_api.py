@@ -22,7 +22,7 @@ MODELS = {
     "default_model": "general",
     "providers": {"local": {"base_url_env": "TEST_LLM_BASE_URL"}},
     "models": [
-        {"id": "general", "label": "General", "provider": "local", "provider_model": "gemma4:e4b", "thinking": False},
+        {"id": "general", "label": "General", "provider": "local", "provider_model": "gemma4:e4b", "thinking": False, "tags": ["vision"]},
         {"id": "coder", "label": "Coder", "provider": "local", "provider_model": "nemotron-3-nano:4b", "tags": ["code"]},
     ],
     "embedding": {"provider": "local", "provider_model": "nomic-embed-text"},
@@ -384,7 +384,7 @@ def test_long_text_is_split_into_overlapping_pieces():
 def test_models_describe_themselves_for_the_library(setup):
     client, _, _ = setup
     general, coder = client.get("/api/models").json()["models"]
-    assert (general["thinking"], general["tags"]) == (False, []) and (coder["thinking"], coder["tags"]) == (None, ["code"])
+    assert (general["thinking"], general["tags"]) == (False, ["vision"]) and (coder["thinking"], coder["tags"]) == (None, ["code"])
 
 
 def test_repository_lists_stored_models_and_their_role(setup):
@@ -399,6 +399,100 @@ def test_repository_lists_stored_models_and_their_role(setup):
 
     registry.use_ollama(set(), down=True)
     assert client.get("/api/repository").status_code == 503
+
+
+# ---------- AI Studio ----------
+
+SAMPLE = """# Patrol report
+Opening paragraph with **bold** words.
+
+## Findings
+- First point
+- Second point with `code`
+1. A numbered point
+
+## Recommendations
+Move the reserve forward."""
+
+
+def test_text_becomes_an_outline():
+    from app import studio
+
+    doc = studio.outline("", SAMPLE)
+    assert doc.title == "Patrol report"
+    assert [s.heading for s in doc.sections] == ["", "Findings", "Recommendations"]
+    assert doc.sections[1].blocks == [("bullet", "First point"), ("bullet", "Second point with `code`"), ("bullet", "A numbered point")]
+    assert studio.plain("**Bold** and *soft* `code`") == "Bold and soft code"
+    deck = studio.slides(doc)
+    assert [s["kind"] for s in deck] == ["title", "content", "content", "content", "end"]
+
+
+@pytest.mark.parametrize(("fmt", "magic", "inside"), [("pdf", b"%PDF", None), ("docx", b"PK", "word/document.xml"), ("pptx", b"PK", "ppt/slides/slide2.xml")])
+def test_export_makes_a_real_file(setup, fmt, magic, inside):
+    import io
+    import zipfile
+
+    client, registry, _ = setup
+    response = client.post("/api/studio/export", json={"format": fmt, "title": "", "content": SAMPLE})
+    assert response.status_code == 200 and response.content.startswith(magic)
+    assert response.headers["content-disposition"] == f'attachment; filename="Patrol-report.{fmt}"'
+    if inside:
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            assert "Second point" in archive.read(inside).decode() or fmt == "pptx"
+    assert registry.calls == []  # no model needed
+    assert client.post("/api/studio/export", json={"format": "odt", "content": "x"}).status_code == 422
+
+
+def test_outline_preview(setup):
+    client, _, _ = setup
+    body = client.post("/api/studio/outline", json={"format": "pptx", "content": SAMPLE}).json()
+    assert body["title"] == "Patrol report" and body["filename"] == "Patrol-report.pptx" and len(body["slides"]) == 5
+
+
+def test_demo_image_follows_the_prompt(setup):
+    client, _, _ = setup
+    first = client.post("/api/studio/image", json={"prompt": "Snow ridge at dawn", "style": "landscape"}).json()
+    again = client.post("/api/studio/image", json={"prompt": "Snow ridge at dawn", "style": "landscape"}).json()
+    other = client.post("/api/studio/image", json={"prompt": "Desert convoy", "style": "terrain map"}).json()
+    assert first["svg"] == again["svg"] and first["svg"] != other["svg"]  # same prompt, same picture
+    assert (first["palette"], other["palette"]) == ("snow", "desert")
+    assert first["svg"].startswith("<svg") and "NOT A GENERATIVE MODEL" in first["svg"]
+    assert client.post("/api/studio/image", json={"prompt": "<script>", "style": "poster"}).json()["svg"].count("<script>") == 0
+
+
+def test_draft_streams_from_the_model(setup):
+    client, registry, _ = setup
+    stream = events(client.post("/api/studio/draft", json={"topic": "Winter road clearance", "kind": "briefing", "model": "auto"}))
+    assert [e["type"] for e in stream] == ["start", "delta", "delta", "done"] and stream[0]["model"] == "general"
+    assert "briefing presentation" in registry.prompts[-1][0]["content"] and registry.calls[-1]["system"].startswith("You are SAINIK AI")
+
+
+def test_image_analysis_uses_a_model_that_can_read_images(setup):
+    client, registry, _ = setup
+    pixel = "data:image/png;base64,iVBORw0KGgo="
+    stream = events(client.post("/api/studio/image-analysis", json={"image": pixel, "task": "text", "model": "coder"}))
+    assert stream[0]["model"] == "general"  # "coder" cannot read images, so the vision model is used
+    content = registry.prompts[-1][0]["content"]
+    assert content[0]["type"] == "text" and content[1] == {"type": "image_url", "image_url": {"url": pixel}}
+    assert client.post("/api/studio/image-analysis", json={"image": "data:text/html;base64,AAAA"}).status_code == 422
+
+    registry.config.models[0].tags = []  # no model can read images: a plain 400, before any streaming
+    response = client.post("/api/studio/image-analysis", json={"image": pixel})
+    assert response.status_code == 400 and "read images" in response.json()["detail"]
+
+
+def test_document_analysis_and_insights(setup):
+    client, registry, _ = setup
+    text = "Annual leave policy. " * 30 + "Effective 12 Jan 2026 for all units."
+    document_id = upload(client, "leave.txt", text).json()["id"]
+    facts = client.get(f"/api/documents/{document_id}/insights").json()
+    assert facts["keywords"][:2] == ["annual", "leave"] and "12 Jan 2026" in facts["dates"] and facts["words"] > 90
+
+    stream = events(client.post("/api/studio/document-analysis", json={"document_id": document_id, "task": "actions"}))
+    assert stream[0]["task"] == "Actions and risks" and stream[0]["read_percent"] == 100 and stream[-1]["type"] == "done"
+    sent = registry.prompts[-1][0]["content"]
+    assert "Effective 12 Jan 2026" in sent and sent.count("Annual leave policy.") == 30  # the pieces are joined without repeats
+    assert client.get(f"/api/documents/{'0' * 32}/insights").status_code == 404
 
 
 def test_models_file_validation():

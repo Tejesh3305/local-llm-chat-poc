@@ -23,5 +23,10 @@ export const Icon = {
   file: () => <Svg><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5M9 13h6M9 17h6" /></Svg>,
   bulb: () => <Svg><path d="M9 18h6M10 21h4" /><path d="M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z" /></Svg>,
   pencil: () => <Svg><path d="M4 20h4L19 9l-4-4L4 16z" /><path d="M13.5 6.5l4 4" /></Svg>,
+  image: () => <Svg><rect x="3.5" y="4.5" width="17" height="15" rx="2" /><circle cx="9" cy="10" r="1.8" /><path d="M20.5 16l-5-5-9 8.5" /></Svg>,
+  wand: () => <Svg><path d="M5 19L16 8" /><path d="M14.5 6.5l3 3" /><path d="M19 3v3M17.5 4.5h3M6 4v2M5 5h2M19 15v2M18 16h2" /></Svg>,
+  scan: () => <Svg><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16" /><path d="M8 12h8" /></Svg>,
+  slides: () => <Svg><rect x="3.5" y="4.5" width="17" height="11" rx="1.5" /><path d="M12 15.5V20M8.5 20h7M7.5 9h6M7.5 12h4" /></Svg>,
+  download: () => <Svg><path d="M12 4v11M7 10.5l5 5 5-5M5 19.5h14" /></Svg>,
   book: () => <Svg><path d="M5 4.5h9a3 3 0 0 1 3 3V20H8a3 3 0 0 1-3-3z" /><path d="M5 17a3 3 0 0 1 3-3h9" /></Svg>,
 };

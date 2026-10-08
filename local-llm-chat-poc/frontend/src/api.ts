@@ -1,5 +1,6 @@
 import type {
-  ConversationSummary, Doc, DocumentInfo, InputValue, ModelsResponse, RepositoryModel, Situation, StoredConversation, WorkflowResult, WorkflowsResponse,
+  ConversationSummary, DemoImage, Doc, DocumentInfo, DocumentInsights, ExportFormat, InputValue, ModelsResponse, OutlineResponse,
+  RepositoryModel, Situation, StoredConversation, WorkflowResult, WorkflowsResponse,
 } from './types';
 
 /** Sent as the model id to let the backend pick a model for each message. */
@@ -80,6 +81,30 @@ export const uploadDocument = async (file: File): Promise<DocumentInfo> => {
 export const deleteDocument = async (id: string): Promise<void> => {
   await request(`/api/documents/${id}`, { method: 'DELETE' });
 };
+
+// ---------- AI Studio ----------
+
+/** The text as a PDF, Word or PowerPoint file. */
+export const exportFile = async (format: ExportFormat, title: string, content: string): Promise<Blob> =>
+  (await request('/api/studio/export', post({ format, title, content }))).blob();
+
+/** How the text will be laid out, for the preview. */
+export const fetchOutline = async (format: ExportFormat, title: string, content: string): Promise<OutlineResponse> =>
+  (await request('/api/studio/outline', post({ format, title, content }))).json();
+
+export const makeImage = async (prompt: string, style: string): Promise<DemoImage> => (await request('/api/studio/image', post({ prompt, style }))).json();
+
+export const fetchInsights = async (id: string): Promise<DocumentInsights> => (await request(`/api/documents/${id}/insights`)).json();
+
+/** Offers a file to the viewer as a download. */
+export function saveFile(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob);
+  const link = Object.assign(document.createElement('a'), { href: url, download: name });
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
 
 export const fetchWorkflows = async (): Promise<WorkflowsResponse> => (await request('/api/workflows')).json();
 

@@ -40,6 +40,10 @@ async def load(model: str) -> None:
 
 def reply_for(model: str, messages: list[dict]) -> str:
     asked = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+    if isinstance(asked, list):  # a message with a picture: text parts and image parts
+        if any(part.get("type") == "image_url" for part in asked):
+            return f"**[mock · {model}]** Canned image description, no model is running. The picture would be described here."
+        asked = " ".join(part.get("text", "") for part in asked)
     # A workflow's model step sends TASK / FACTS / REFERENCES: answer with the first facts, so the draft looks the part.
     facts = re.search(r"\nFACTS\n(.*?)\n\nREFERENCES", asked, re.S)
     if facts:

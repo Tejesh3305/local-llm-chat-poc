@@ -138,6 +138,18 @@ class DocumentLibrary:
             )
         return info
 
+    def text(self, document_id: str) -> str | None:
+        """The document's text, put back together from its pieces (the overlaps are removed). None if unknown."""
+        with self._lock:
+            if self._db.execute("SELECT 1 FROM documents WHERE id = ?", (document_id,)).fetchone() is None:
+                return None
+            pieces = [row["text"] for row in self._db.execute("SELECT text FROM chunks WHERE document_id = ? ORDER BY position", (document_id,))]
+        whole = ""
+        for piece in pieces:
+            at = whole.rfind(piece[:40], max(0, len(whole) - CHUNK_OVERLAP - 200)) if whole else -1
+            whole = whole[:at] + piece if at != -1 else (f"{whole}\n\n{piece}" if whole else piece)
+        return whole
+
     def delete(self, document_id: str) -> bool:
         with self._lock, self._db:
             return self._db.execute("DELETE FROM documents WHERE id = ?", (document_id,)).rowcount > 0

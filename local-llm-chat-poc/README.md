@@ -27,6 +27,21 @@ Chats and uploaded documents are stored in `backend/storage/chat.db` (SQLite). D
 
 **Corpus** and **Documents** are different sources: Corpus is the scenario's sample documents (keyword search, fixed), Documents are the files you attach (embedding search).
 
+## AI Studio
+
+A fourth view, **AI Studio**, has six separate tools in its left rail. Each says on screen what runs on the model and what does not.
+
+| Tool | What the model does | What runs without a model |
+|---|---|---|
+| PDF report | Optional: drafts the report from a short description | The PDF itself (fpdf2): header band, unit marking, page numbers, preview in the page |
+| Word document | Optional: drafts a letter, order or memo | The `.docx` (python-docx) with real Title/Heading/List styles, so it can be edited |
+| PowerPoint deck | Optional: drafts a briefing | The `.pptx` (python-pptx): title slide, one slide per section, closing slide; slide preview in the page |
+| Image generation | **Mock.** No image model | Draws a terrain map, landscape or poster from the prompt's words (snow, night, desert, forest…). Same prompt, same picture. Marked *Demo render, not a generative model* |
+| Image processing | Describe, report summary, read text: sent to the model tagged `vision` (Gemma 4 E4B) | Auto-enhance, sharpen, grayscale, night vision, thermal, edge detect, in the browser |
+| Document processing | Executive summary, key points, people/places/dates, actions and risks, summary in Hindi, from an uploaded document | Word count, reading time, frequent terms and dates, counted from the text |
+
+The text for the three file tools is Markdown-style: `#` title, `##` section (one slide each in PowerPoint), `-` bullet, `**bold**`. Every model result can be saved as PDF, Word or PowerPoint. A long document is cut to its first 12,000 characters for the model, and the page says so. Nothing generated is stored on the server.
+
 ## Running it
 
 One-time setup, while online:
@@ -136,6 +151,11 @@ Interactive docs: http://127.0.0.1:8000/docs
 | `GET` | `/api/corpus` | The sample documents |
 | `GET` `POST` `DELETE` | `/api/documents`, `/api/documents/{id}` | The uploaded documents: list, add (multipart `file`), remove |
 | `GET` `PATCH` `DELETE` | `/api/conversations`, `/api/conversations/{id}` | The saved chats: list, read, rename, delete |
+| `POST` | `/api/studio/draft` | Streams a Markdown draft: `{topic, kind: report \| letter \| briefing}` |
+| `POST` | `/api/studio/export`, `/api/studio/outline` | The text as a PDF/Word/PowerPoint file (`format`), or its layout for the preview |
+| `POST` | `/api/studio/image` | A demo picture (SVG) from `{prompt, style}` |
+| `POST` | `/api/studio/image-analysis` | Streams the model's description of a picture (`image` as a data URL, `task: describe \| summary \| text`) |
+| `GET` `POST` | `/api/documents/{id}/insights`, `/api/studio/document-analysis` | Figures about an uploaded document; streams the model's analysis of it |
 | `GET` | `/api/repository` | Every model stored in Ollama, with size, format, context length and capabilities |
 | `GET` | `/api/health` | Each provider's status, and whether the model servers are on this machine, the local network or elsewhere |
 
@@ -143,7 +163,7 @@ The speed figures under each reply are measured by the backend: **First word** i
 
 ## What has been checked
 
-- `pytest` in `backend/`: 46 tests covering the calculations, the search, every workflow, the model step, Corpus chat, model loading and unloading, the thinking option, saved chats, uploaded documents, the Auto choice and the model repository. None needs a model.
+- `pytest` in `backend/`: 56 tests covering the AI Studio file exports, previews, demo images, drafts, image and document analysis, and the calculations, the search, every workflow, the model step, Corpus chat, model loading and unloading, the thinking option, saved chats, uploaded documents, the Auto choice and the model repository. None needs a model.
 - `npm run build` in `frontend/`: type-check and production build.
 - End to end in Chrome 154 and Edge 154 against the mock runtime, through the backend: chat, model switching, Stop, Retry, a stopped runtime, a model that is not installed, Corpus chat with sources, all seven workflows, live recalculation, a workflow with its model step off.
 

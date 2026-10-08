@@ -129,6 +129,39 @@ class SystemInfo(BaseModel):
     endpoints: list[str]  # host names of the configured model servers
 
 
+class DraftRequest(BaseModel):
+    """AI Studio: ask the model to write text that is then turned into a file."""
+
+    topic: str = Field(min_length=3, max_length=4000)
+    kind: Literal["report", "letter", "briefing"] = "report"
+    model: str | None = Field(default=None, max_length=64)
+
+
+class ExportRequest(BaseModel):
+    """AI Studio: Markdown-style text to turn into a PDF, Word or PowerPoint file."""
+
+    format: Literal["pdf", "docx", "pptx"]
+    title: str = Field(default="", max_length=200)
+    content: str = Field(min_length=1, max_length=60_000)
+
+
+class ImageRequest(BaseModel):
+    prompt: str = Field(min_length=2, max_length=500)
+    style: Literal["terrain map", "landscape", "poster"] = "landscape"
+
+
+class ImageAnalysisRequest(BaseModel):
+    image: str = Field(pattern=r"^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$")
+    task: Literal["describe", "summary", "text"] = "describe"
+    model: str | None = Field(default=None, max_length=64)
+
+
+class DocumentAnalysisRequest(BaseModel):
+    document_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    task: Literal["summary", "key_points", "entities", "actions", "hindi"] = "summary"
+    model: str | None = Field(default=None, max_length=64)
+
+
 class WorkflowRequest(BaseModel):
     # Input values by path, as offered by GET /api/workflows. Anything left out keeps its scenario value.
     inputs: dict[str, Any] = Field(default_factory=dict)

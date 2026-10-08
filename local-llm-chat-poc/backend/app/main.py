@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 from fastapi.sse import EventSourceResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import workflows
+from . import studio, workflows
 from .config import AUTO_MODEL, BACKEND_DIR, ModelConfig, PromptsFile, get_settings, load_data_file, load_models_file
 from .corpus import Corpus, extracts, reference
 from .documents import SUPPORTED, DocumentError, DocumentLibrary, with_excerpts
@@ -24,7 +24,12 @@ from .schemas import (
     ChatRequest,
     Conversation,
     ConversationSummary,
+    DocumentAnalysisRequest,
     DocumentInfo,
+    DraftRequest,
+    ExportRequest,
+    ImageAnalysisRequest,
+    ImageRequest,
     Message,
     ModelInfo,
     ModelsResponse,
@@ -481,6 +486,136 @@ def delete_document(document_id: str, library: DocumentLibrary = Depends(get_lib
     if not library.delete(document_id):
         raise HTTPException(404, "Document not found.")
     return Response(status_code=204)
+
+
+# ---------- AI Studio ----------
+
+STUDIO_DOCUMENT_CHARS = 12_000  # what a small model can read in one go, with room for its answer
+MAX_IMAGE_CHARS = 8_000_000  # about 6 MB of picture as base64
+
+
+def studio_model(registry: ModelRegistry, model_id: str | None, need_vision: bool = False) -> ModelConfig:
+    """The model a Studio task runs on: the one asked for, or the default (Auto is a chat choice).
+
+    For a picture, a model that can read images is used instead when the chosen one cannot.
+    """
+    model = resolve_model(registry, model_id if model_id and model_id != AUTO_MODEL else registry.default_model_id)
+    if need_vision and "vision" not in model.tags:
+        reader = next((m for m in registry.config.models if "vision" in m.tags and m.provider in registry.clients), None)
+        if reader is None:
+            raise HTTPException(400, 'No model in models.json can read images. Tag one with "vision".')
+        model = reader
+    return model
+
+
+@dataclass
+class StudioJob:
+    """One Studio request for the model, checked before the stream starts so mistakes get a proper 4xx status."""
+
+    model: ModelConfig
+    content: str | list[dict]  # the user message; a list when it carries a picture
+    system: str
+    temperature: float
+    max_tokens: int
+    extra: dict  # added to the "start" event
+
+
+async def model_events(registry: ModelRegistry, job: StudioJob) -> AsyncIterable[dict]:
+    """Server-Sent Events for one Studio request: start -> delta... -> done (or error)."""
+    yield {"type": "start", "model": job.model.id, **job.extra}
+    result = StreamResult()
+    try:
+        async with registry.slot:  # one model in memory, so one generation at a time
+            await registry.activate(job.model)
+            async for text in registry.stream_chat(
+                job.model, [{"role": "user", "content": job.content}], result,
+                system=job.system, temperature=job.temperature, max_tokens=job.max_tokens,
+            ):
+                yield {"type": "delta", "text": text}
+    except LLMError as error:
+        logger.warning("studio request failed (model=%s): %s", job.model.id, error.__cause__ or error)
+        yield {"type": "error", "message": error.user_message}
+        return
+    yield {"type": "done", **stats(result)}
+
+
+def prepare_draft(body: DraftRequest, registry: ModelRegistry = Depends(get_registry)) -> StudioJob:
+    ask = f"Write {studio.DRAFT_KINDS[body.kind]} about the following.\n\n{body.topic}"
+    return StudioJob(studio_model(registry, body.model), ask, studio.DRAFT_SYSTEM, 0.5, 1400, {})
+
+
+@app.post("/api/studio/draft", response_class=EventSourceResponse)
+async def studio_draft(job: StudioJob = Depends(prepare_draft), registry: ModelRegistry = Depends(get_registry)) -> AsyncIterable[dict]:
+    """The model writes a report, letter or briefing in Markdown, ready to be exported."""
+    async for event in model_events(registry, job):
+        yield event
+
+
+@app.post("/api/studio/export")
+def studio_export(body: ExportRequest):
+    """The text as a PDF, Word or PowerPoint file. No model involved."""
+    document = studio.outline(body.title, body.content)
+    data = studio.RENDERERS[body.format](document)
+    name = studio.filename(document.title, body.format)
+    return Response(data, media_type=studio.FORMATS[body.format], headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@app.post("/api/studio/outline")
+def studio_outline(body: ExportRequest):
+    """How the text will be laid out: sections for PDF and Word, slides for PowerPoint. Used for the preview."""
+    document = studio.outline(body.title, body.content)
+    return {**document.as_dict(), "slides": studio.slides(document), "filename": studio.filename(document.title, body.format)}
+
+
+@app.post("/api/studio/image")
+def studio_image(body: ImageRequest):
+    """A demo picture drawn from the prompt's words. Not a generative model, and labelled as such."""
+    svg, details = studio.demo_image(body.prompt, body.style)
+    return {"svg": svg, **details}
+
+
+def prepare_image_analysis(body: ImageAnalysisRequest, registry: ModelRegistry = Depends(get_registry)) -> StudioJob:
+    if len(body.image) > MAX_IMAGE_CHARS:
+        raise HTTPException(413, "The picture is too large. Use one under 6 MB.")
+    label, task = studio.IMAGE_TASKS[body.task]
+    content = [{"type": "text", "text": task}, {"type": "image_url", "image_url": {"url": body.image}}]
+    system = "You are SAINIK AI, describing images for a staff officer. Say only what you can see; if unsure, say so."
+    return StudioJob(studio_model(registry, body.model, need_vision=True), content, system, 0.3, 700, {"task": label})
+
+
+@app.post("/api/studio/image-analysis", response_class=EventSourceResponse)
+async def studio_image_analysis(job: StudioJob = Depends(prepare_image_analysis), registry: ModelRegistry = Depends(get_registry)) -> AsyncIterable[dict]:
+    """A model that can read images describes, summarises or reads the text in a picture."""
+    async for event in model_events(registry, job):
+        yield event
+
+
+@app.get("/api/documents/{document_id}/insights")
+def document_insights(document_id: str, library: DocumentLibrary = Depends(get_library)):
+    """Figures about an uploaded document that need no model."""
+    text = library.text(document_id)
+    if text is None:
+        raise HTTPException(404, "Document not found.")
+    return studio.insights(text)
+
+
+def prepare_document_analysis(
+    body: DocumentAnalysisRequest, registry: ModelRegistry = Depends(get_registry), library: DocumentLibrary = Depends(get_library)
+) -> StudioJob:
+    text = library.text(body.document_id)
+    if text is None:
+        raise HTTPException(404, "Document not found.")
+    label, task = studio.ANALYSIS_TASKS[body.task]
+    read = min(1.0, STUDIO_DOCUMENT_CHARS / max(1, len(text)))
+    ask = f"{task}\n\nDOCUMENT\n{text[:STUDIO_DOCUMENT_CHARS]}"
+    return StudioJob(studio_model(registry, body.model), ask, studio.ANALYSIS_SYSTEM, 0.2, 900, {"task": label, "read_percent": round(read * 100)})
+
+
+@app.post("/api/studio/document-analysis", response_class=EventSourceResponse)
+async def studio_document_analysis(job: StudioJob = Depends(prepare_document_analysis), registry: ModelRegistry = Depends(get_registry)) -> AsyncIterable[dict]:
+    """The model reads an uploaded document and writes a summary, key points, names and dates, or actions."""
+    async for event in model_events(registry, job):
+        yield event
 
 
 # ---------- the built frontend ----------

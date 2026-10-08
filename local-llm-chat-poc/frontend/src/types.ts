@@ -77,6 +77,43 @@ export interface Excerpt {
   score: number;
 }
 
+// ---------- AI Studio ----------
+
+export type ExportFormat = 'pdf' | 'docx' | 'pptx';
+
+export interface OutlineResponse {
+  title: string;
+  sections: { heading: string; blocks: ['p' | 'bullet', string][] }[];
+  slides: { kind: 'title' | 'content' | 'end'; title: string; subtitle?: string; points?: string[] }[];
+  filename: string;
+}
+
+export interface DemoImage {
+  svg: string;
+  style: string;
+  palette: string;
+  seed: number;
+  width: number;
+  height: number;
+}
+
+export interface DocumentInsights {
+  words: number;
+  characters: number;
+  sentences: number;
+  reading_minutes: number;
+  keywords: string[];
+  dates: string[];
+  numbers: number;
+}
+
+// Server-Sent Events sent by the AI Studio routes that use a model
+export type StudioEvent =
+  | { type: 'start'; model: string; task?: string; read_percent?: number }
+  | { type: 'delta'; text: string }
+  | ({ type: 'done' } & Stats)
+  | { type: 'error'; message: string };
+
 // ---------- saved chats ----------
 
 export interface ConversationSummary {

@@ -21,12 +21,18 @@ export async function fetchModels(): Promise<ModelsResponse> {
   return response.json();
 }
 
+/** Switch models: the backend unloads the other models, then loads this one into memory. */
+export async function loadModel(id: string, signal: AbortSignal): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/models/${encodeURIComponent(id)}/load`, { method: 'POST', signal });
+  if (!response.ok) throw new Error(await errorMessage(response));
+}
+
 /**
  * POST /api/chat and call onEvent for every Server-Sent Event.
  * Pass an AbortSignal to stop generation (the backend stops the model too).
  */
 export async function streamChat(
-  body: { message: string; model?: string; conversation_id?: string | null },
+  body: { message: string; model?: string; conversation_id?: string | null; thinking?: boolean },
   onEvent: (event: ChatEvent) => void,
   signal: AbortSignal,
 ): Promise<void> {

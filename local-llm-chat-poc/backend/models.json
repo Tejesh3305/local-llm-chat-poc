@@ -3,7 +3,8 @@
   "providers": {
     "ollama": {
       "base_url_env": "OLLAMA_BASE_URL",
-      "api_key_env": "OLLAMA_API_KEY"
+      "api_key_env": "OLLAMA_API_KEY",
+      "runtime": "ollama"
     },
     "llamacpp": {
       "base_url_env": "LLAMACPP_BASE_URL",
@@ -19,7 +20,8 @@
       "provider_model": "gemma4:e4b",
       "system_prompt": "You are a helpful, concise assistant.",
       "temperature": 0.7,
-      "max_tokens": 1024
+      "max_tokens": 1024,
+      "thinking": false
     },
     {
       "id": "nemotron-nano-4b",
@@ -29,7 +31,8 @@
       "provider_model": "nemotron-3-nano:4b",
       "system_prompt": "You are a precise assistant for programming and reasoning tasks. Put code in fenced blocks.",
       "temperature": 0.6,
-      "max_tokens": 2048
+      "max_tokens": 2048,
+      "thinking": false
     }
   ]
 }

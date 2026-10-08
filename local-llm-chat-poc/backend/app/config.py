@@ -3,6 +3,7 @@
 import json
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, model_validator
@@ -39,6 +40,9 @@ class ProviderConfig(BaseModel):
     # Names of environment variables, never literal URLs or keys.
     base_url_env: str = Field(pattern=r"^[A-Z][A-Z0-9_]*$")
     api_key_env: str | None = Field(default=None, pattern=r"^[A-Z][A-Z0-9_]*$")
+    # "ollama" lets the app load/unload models so only one is in memory at a time.
+    # "openai" is any other OpenAI-compatible server, which manages its own memory.
+    runtime: Literal["openai", "ollama"] = "openai"
 
 
 class ModelConfig(BaseModel):
@@ -50,6 +54,10 @@ class ModelConfig(BaseModel):
     system_prompt: str | None = None
     temperature: float | None = Field(default=None, ge=0, le=2)
     max_tokens: int | None = Field(default=None, gt=0)
+    # For models that reason silently before answering: whether they do so by default.
+    # Off is much faster for everyday questions; the UI can turn it on per message.
+    # Leave unset for models/runtimes without a thinking switch.
+    thinking: bool | None = None
 
 
 class ModelsFile(BaseModel):

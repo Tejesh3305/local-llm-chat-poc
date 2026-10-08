@@ -15,7 +15,7 @@ export function useChat() {
   const updateLast = (change: (message: ChatMessage) => ChatMessage) =>
     setMessages((list) => list.map((m, i) => (i === list.length - 1 ? change(m) : m)));
 
-  const send = useCallback(async (text: string, model: string) => {
+  const send = useCallback(async (text: string, model: string, thinking?: boolean) => {
     setError(null);
     setStatus('waiting');
     const controller = new AbortController();
@@ -28,7 +28,7 @@ export function useChat() {
 
     try {
       await streamChat(
-        { message: text, model, conversation_id: conversationId.current },
+        { message: text, model, conversation_id: conversationId.current, thinking },
         (event) => {
           if (event.type === 'start') {
             conversationId.current = event.conversation_id;
@@ -36,7 +36,8 @@ export function useChat() {
           } else if (event.type === 'delta') {
             updateLast((m) => ({ ...m, content: m.content + event.text }));
           } else if (event.type === 'done') {
-            updateLast((m) => ({ ...m, outputTokens: event.output_tokens }));
+            const { output_tokens, first_token_ms, tokens_per_second } = event;
+            updateLast((m) => ({ ...m, stats: { output_tokens, first_token_ms, tokens_per_second } }));
           } else if (event.type === 'error') {
             setError(event.message);
           }
@@ -56,11 +57,11 @@ export function useChat() {
 
   /** Re-send the last user message (after an error). */
   const retry = useCallback(
-    (model: string) => {
+    (model: string, thinking?: boolean) => {
       const lastUser = [...messages].reverse().find((m) => m.role === 'user');
       if (!lastUser) return;
       setMessages((list) => list.slice(0, list.lastIndexOf(lastUser)));
-      void send(lastUser.content, model);
+      void send(lastUser.content, model, thinking);
     },
     [messages, send],
   );

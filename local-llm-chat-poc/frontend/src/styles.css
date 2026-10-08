@@ -28,7 +28,16 @@ button, select, textarea { font: inherit; color: inherit; }
 header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
 header h1 { font-size: 1rem; margin: 0; }
 .controls { display: flex; gap: 10px; align-items: center; }
-.model-selector { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 0.9em; }
+.model-selector, .model-selector label { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 0.9em; }
+.model-selector label { font-size: 1em; }
+.think-toggle { padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--muted); }
+.think-toggle[aria-pressed='true'] { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.model-status { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); white-space: nowrap; }
+.model-status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); }
+.model-status.ready .dot { background: var(--accent); }
+.model-status.busy .dot { background: var(--warn); }
+.model-status.problem { color: var(--error); }
+.model-status.problem .dot { background: var(--error); }
 .model-selector select { padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--text); }
 button { cursor: pointer; }
 .secondary { padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: transparent; }

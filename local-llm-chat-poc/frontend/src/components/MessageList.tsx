@@ -16,6 +16,15 @@ export function MessageList({ messages, waiting, models }: Props) {
   }
 
   const label = (id?: string) => models.find((m) => m.id === id)?.label ?? id;
+  const details = (m: ChatMessage) =>
+    [
+      label(m.model),
+      m.stats?.output_tokens ? `${m.stats.output_tokens} tokens` : '',
+      m.stats?.tokens_per_second ? `${m.stats.tokens_per_second} tokens/s` : '',
+      m.stats?.first_token_ms != null ? `first word after ${(m.stats.first_token_ms / 1000).toFixed(1)} s` : '',
+    ]
+      .filter(Boolean)
+      .join(' · ');
 
   return (
     <div className="messages">
@@ -26,12 +35,7 @@ export function MessageList({ messages, waiting, models }: Props) {
           ) : (
             <div className="text">{m.content}</div>
           )}
-          {m.role === 'assistant' && m.content && (
-            <div className="meta">
-              {label(m.model)}
-              {m.outputTokens ? ` · ${m.outputTokens} tokens` : ''}
-            </div>
-          )}
+          {m.role === 'assistant' && m.content && <div className="meta">{details(m)}</div>}
         </div>
       ))}
       <div ref={bottom} />

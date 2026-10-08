@@ -183,6 +183,17 @@ class DocumentLibrary:
         return await asyncio.to_thread(rank)
 
 
+def with_documents(question: str, documents: list[tuple[str, str]]) -> str:
+    """The question as sent to the model with whole documents ((file name, text) pairs) instead of excerpts."""
+    texts = "\n\n".join(f"[{n}] {name}\n{text}" for n, (name, text) in enumerate(documents, start=1))
+    return (
+        "Answer using the user's documents below, which are given in full. "
+        "Mention the document number, like [1], for what you use. "
+        "If the documents do not contain the answer, say so instead of guessing.\n\n"
+        f"{texts}\n\nQuestion: {question}"
+    )
+
+
 def with_excerpts(question: str, sources: list[Source]) -> str:
     """The question as sent to the model: the excerpts first, then what the user asked."""
     excerpts = "\n\n".join(f"[{n}] (from {s.filename})\n{s.text}" for n, s in enumerate(sources, start=1))

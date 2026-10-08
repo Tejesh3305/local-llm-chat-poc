@@ -86,6 +86,7 @@ export function storedReply(model: ModelInfo, message: StoredMessage): Reply {
   reply.sources = message.sources ?? undefined;
   reply.routeReason = message.route_reason ?? undefined;
   reply.excerpts = message.excerpts;
+  reply.files = message.files ?? [];
   finish(reply, message.stats ?? {});
   return reply;
 }

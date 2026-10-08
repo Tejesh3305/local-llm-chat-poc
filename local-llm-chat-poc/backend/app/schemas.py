@@ -26,6 +26,7 @@ class Message(BaseModel):
     sources: list[dict] | None = None  # the corpus documents found, when Corpus was on
     excerpts: list[Source] = []  # the excerpts of uploaded documents that were used
     stats: dict | None = None  # the figures of the "done" event
+    files: list[dict] = []  # assistant message: files made for the user ({id, filename, format, size_bytes})
 
 
 class Conversation(BaseModel):

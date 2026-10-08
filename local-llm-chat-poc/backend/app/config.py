@@ -53,6 +53,11 @@ class Settings(BaseSettings):
         folder.mkdir(parents=True, exist_ok=True)
         return str(folder / "chat.db")
 
+    @property
+    def files_path(self) -> str:
+        """Where files made in the chat are kept, next to the database."""
+        return str(Path(self.database_path).parent / "files")
+
 
 class ProviderConfig(BaseModel):
     # Names of environment variables, never literal URLs or keys.

@@ -68,6 +68,11 @@ export function useChat(options: Options) {
             reply.cold = chosen.loaded === false;
           }
           reply.routeReason = event.route_reason;
+          if (event.action) reply.waitLabel = event.action.label;   // "Converting to a Word document"
+          reply.rev++;
+          touch();
+        } else if (event.type === 'file') {
+          reply.files = [...(reply.files ?? []), event.file];
           reply.rev++;
           touch();
         } else if (event.type === 'excerpts') {

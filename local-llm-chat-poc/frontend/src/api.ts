@@ -96,6 +96,9 @@ export const makeImage = async (prompt: string, style: string): Promise<DemoImag
 
 export const fetchInsights = async (id: string): Promise<DocumentInsights> => (await request(`/api/documents/${id}/insights`)).json();
 
+/** Where a file made in the chat is downloaded from. */
+export const fileUrl = (id: string) => `${API_BASE}/api/files/${id}`;
+
 /** Offers a file to the viewer as a download. */
 export function saveFile(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);

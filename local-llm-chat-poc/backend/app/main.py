@@ -1,6 +1,7 @@
 """FastAPI application: routes for models, chat (streaming), workflows, the corpus, conversations and documents."""
 
 import logging
+import re
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,14 +10,15 @@ from typing import Any
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.sse import EventSourceResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import studio, workflows
+from . import actions, studio, workflows
 from .config import AUTO_MODEL, BACKEND_DIR, ModelConfig, PromptsFile, get_settings, load_data_file, load_models_file
 from .corpus import Corpus, extracts, reference
-from .documents import SUPPORTED, DocumentError, DocumentLibrary, with_excerpts
+from .documents import SUPPORTED, DocumentError, DocumentLibrary, with_documents, with_excerpts
+from .files import GeneratedFiles
 from .llm import LLMError, ModelRegistry, ProviderNotConfiguredError, StreamResult, UnknownModelError
 from .router import choose_model
 from .scenario import Scenario, digest, situation
@@ -51,6 +53,7 @@ registry = ModelRegistry(
 )
 store = ConversationStore(settings.database_path)
 library = DocumentLibrary(settings.database_path)
+files = GeneratedFiles(settings.files_path)
 
 # Workflow data. All of it is sample data for the exercise scenario; see data/*.json.
 base_scenario: Scenario = load_data_file(settings.data_dir, "scenario.json")
@@ -66,6 +69,10 @@ for _workflow in workflows.WORKFLOWS:
     workflows.run(_workflow, base_scenario, rules, corpus)
 
 GROUNDED_HISTORY_MESSAGES = 6  # the scenario and extracts take most of a small model's context
+# Picked documents up to this length are given to the model whole, instead of the excerpts closest to the question,
+# so "summarise it" or "what is this about" work. It is also what a small model can read in one go.
+WHOLE_DOCUMENT_CHARS = 12_000
+MAX_CONVERTED_CHARS = 400_000  # a document copied as it is into a file
 
 app = FastAPI(title="Local LLM Chat API", version="1.1.0")
 app.add_middleware(
@@ -87,6 +94,10 @@ def get_store() -> ConversationStore:
 
 def get_library() -> DocumentLibrary:
     return library
+
+
+def get_files() -> GeneratedFiles:
+    return files
 
 
 def resolve_model(registry: ModelRegistry, model_id: str) -> ModelConfig:
@@ -216,6 +227,7 @@ class ChatContext:
     route_reason: str | None = None  # set when the Auto choice picked the model
     system: str | None = None  # replaces the model's own system prompt when Corpus is on
     sources: list[dict] | None = None  # the documents found, when Corpus is on
+    file: actions.FileRequest | None = None  # the message asks for a PDF, Word or PowerPoint file
 
 
 async def prepare_chat(
@@ -254,6 +266,8 @@ async def prepare_chat(
         thinking=body.thinking, use_documents=body.use_documents or bool(body.document_ids),
         document_ids=body.document_ids or None, route_reason=route_reason,
     )
+    if not body.grounded:
+        context.file = actions.file_request(body.message)
 
     if body.grounded:
         scenario = scenario_for(body.inputs)
@@ -273,8 +287,14 @@ async def chat(
     registry: ModelRegistry = Depends(get_registry),
     store: ConversationStore = Depends(get_store),
     library: DocumentLibrary = Depends(get_library),
+    files: GeneratedFiles = Depends(get_files),
 ) -> AsyncIterable[dict]:
-    """Streams Server-Sent Events: start -> (excerpts) -> delta... -> done (or error)."""
+    """Streams Server-Sent Events: start -> (excerpts) -> delta... -> (file) -> done (or error)."""
+    if ctx.file:
+        async for event in file_turn(ctx, registry, store, library, files):
+            yield event
+        return
+
     start = {"type": "start", "conversation_id": ctx.conversation.id, "model": ctx.model.id}
     if ctx.route_reason:
         start["route_reason"] = ctx.route_reason
@@ -290,7 +310,13 @@ async def chat(
     result = StreamResult()
     try:
         question = ctx.message
-        if ctx.use_documents:
+        whole = picked_texts(ctx, library)
+        if whole and sum(len(text) for _, _, text in whole) <= WHOLE_DOCUMENT_CHARS:
+            # Short enough to read in full: better than the few excerpts closest to the question
+            excerpts = [Source(document_id=doc_id, filename=name, position=0, text=text[:400], score=1.0) for doc_id, name, text in whole]
+            yield {"type": "excerpts", "excerpts": [excerpt.model_dump() for excerpt in excerpts]}
+            question = with_documents(ctx.message, [(name, text) for _, name, text in whole])
+        elif ctx.use_documents:
             excerpts = await library.search(ctx.message, registry.embed, settings.document_excerpts, ctx.document_ids)
             if excerpts:
                 yield {"type": "excerpts", "excerpts": [excerpt.model_dump() for excerpt in excerpts]}
@@ -320,6 +346,122 @@ async def chat(
             )
 
     yield {"type": "done", **stats(result)}
+
+
+def picked_texts(ctx: ChatContext, library: DocumentLibrary) -> list[tuple[str, str, str]]:
+    """(id, file name, text) of the documents picked with @ for this message."""
+    if not ctx.document_ids:
+        return []
+    return [(doc.id, doc.filename, library.text(doc.id) or "") for doc in library.documents() if doc.id in ctx.document_ids]
+
+
+def file_sources(ctx: ChatContext, library: DocumentLibrary) -> list[tuple[str, str, str]]:
+    """The documents a file request is about: picked with @, else all with Documents on, else the ones the
+    message refers to ("the given doc"): those picked earlier in this chat, or the only uploaded document."""
+    if ctx.document_ids:
+        return picked_texts(ctx, library)
+    documents = library.documents()
+    if ctx.use_documents:
+        chosen = documents[:3]
+    elif ctx.file and ctx.file.mentions_document:
+        earlier = next((m.documents for m in reversed(ctx.conversation.messages) if m.role == "user" and m.documents), [])
+        chosen = [doc for doc in documents if doc.filename in earlier] or (documents if len(documents) == 1 else [])
+    else:
+        chosen = []
+    return [(doc.id, doc.filename, library.text(doc.id) or "") for doc in chosen]
+
+
+async def file_turn(
+    ctx: ChatContext, registry: ModelRegistry, store: ConversationStore, library: DocumentLibrary, files: GeneratedFiles
+) -> AsyncIterable[dict]:
+    """A chat message that asks for a PDF, Word or PowerPoint file.
+
+    Converting a document (or an earlier answer) copies its text into the file, with no model involved.
+    Anything else, such as a summary or a briefing deck, is written by the model first.
+    """
+    request = ctx.file
+    sources = file_sources(ctx, library)
+    earlier = next((m.content for m in reversed(ctx.conversation.messages) if m.role == "assistant"), None)
+    if sources:
+        name = ", ".join(filename for _, filename, _ in sources)
+        text = sources[0][2] if len(sources) == 1 else "\n\n".join(f"## {filename}\n\n{body}" for _, filename, body in sources)
+        default_title = actions.stem(sources[0][1])
+    elif request.mentions_answer and earlier:
+        name, text, default_title = "the previous answer", earlier, "Chat answer"
+    else:
+        name, text, default_title = None, None, ""
+    copy = request.as_is and bool(text)
+
+    label = f"{'Converting to' if copy else 'Writing'} a {request.label}"
+    yield {
+        "type": "start", "conversation_id": ctx.conversation.id, "model": ctx.model.id,
+        "action": {"type": "file", "format": request.format, "label": label},
+    }
+    if sources:
+        refs = [Source(document_id=doc_id, filename=filename, position=0, text=body[:400], score=1.0) for doc_id, filename, body in sources]
+        yield {"type": "excerpts", "excerpts": [ref.model_dump() for ref in refs]}
+
+    result = StreamResult()
+    if copy:
+        content = text[:MAX_CONVERTED_CHARS]
+        words = len(content.split())
+        reply = (
+            f"Here is **{name}** as a {request.label}: about {words:,} words. "
+            "The text is copied as it is; pictures, tables and the original page layout are not carried over."
+            if sources else f"Here is {name} as a {request.label}."
+        )
+        yield {"type": "delta", "text": reply}
+    else:
+        kind = studio.DRAFT_KINDS["briefing" if request.format == "pptx" else "report"]
+        if text:
+            ask = (
+                f"{ctx.message}\n\nWrite it as {kind}. Base it only on the source below and do not add facts that are not in it.\n\n"
+                f"SOURCE ({name})\n{text[:WHOLE_DOCUMENT_CHARS]}"
+            )
+        else:
+            ask = f"Write {kind} for this request: {ctx.message}"
+        parts: list[str] = []
+        try:
+            async with registry.slot:
+                await registry.activate(ctx.model)
+                async for piece in registry.stream_chat(
+                    ctx.model, [{"role": "user", "content": ask}], result, system=studio.DRAFT_SYSTEM, temperature=0.4, max_tokens=1800
+                ):
+                    parts.append(piece)
+                    yield {"type": "delta", "text": piece}
+        except LLMError as error:
+            logger.warning("file request failed (model=%s): %s", ctx.model.id, error.__cause__ or error)
+            yield {"type": "error", "message": error.user_message}
+            return
+        content = reply = "".join(parts)
+        if not content.strip():
+            yield {"type": "error", "message": "The model returned no text to put in the file. Please try again."}
+            return
+
+    document = studio.outline(default_title if copy else "", content)   # the model's draft brings its own "# Title"
+    if document.title == "Untitled document" and default_title:
+        document.title = default_title
+    made = files.save(studio.RENDERERS[request.format](document), studio.filename(document.title, request.format), request.format)
+    yield {"type": "file", "file": made}
+
+    store.add_turn(
+        ctx.conversation,
+        Message(role="user", content=ctx.message, documents=[filename for _, filename, _ in sources] if ctx.document_ids else []),
+        Message(role="assistant", content=reply, model=ctx.model.id, route_reason=ctx.route_reason,
+                excerpts=[Source(document_id=d, filename=f, position=0, text=b[:400], score=1.0) for d, f, b in sources],
+                stats=stats(result), files=[made]),
+    )
+    yield {"type": "done", **stats(result)}
+
+
+@app.get("/api/files/{file_id}")
+def download_file(file_id: str, files: GeneratedFiles = Depends(get_files)):
+    """A file made in the chat."""
+    path = files.get(file_id) if re.fullmatch(r"[a-f0-9]{32}", file_id) else None
+    if path is None:
+        raise HTTPException(404, "File not found. It may have been removed.")
+    fmt = path.suffix.lstrip(".")
+    return FileResponse(path, media_type=studio.FORMATS.get(fmt, "application/octet-stream"), filename=path.name)
 
 
 # ---------- workflows ----------

@@ -81,6 +81,14 @@ export interface Excerpt {
 
 export type ExportFormat = 'pdf' | 'docx' | 'pptx';
 
+/** A file made in the chat, downloadable from /api/files/{id}. */
+export interface GeneratedFile {
+  id: string;
+  filename: string;
+  format: ExportFormat;
+  size_bytes: number;
+}
+
 export interface OutlineResponse {
   title: string;
   sections: { heading: string; blocks: ['p' | 'bullet', string][] }[];
@@ -134,6 +142,7 @@ export interface StoredMessage {
   sources: DocRef[] | null;
   excerpts: Excerpt[];
   stats: Partial<Stats> | null;
+  files?: GeneratedFile[];
 }
 
 export interface StoredConversation {
@@ -155,8 +164,9 @@ export interface Stats {
 
 // Server-Sent Events sent by POST /api/chat
 export type ChatEvent =
-  | { type: 'start'; conversation_id: string; model: string; sources?: DocRef[]; route_reason?: string }
+  | { type: 'start'; conversation_id: string; model: string; sources?: DocRef[]; route_reason?: string; action?: { type: 'file'; format: ExportFormat; label: string } }
   | { type: 'excerpts'; excerpts: Excerpt[] }
+  | { type: 'file'; file: GeneratedFile }
   | { type: 'delta'; text: string }
   | ({ type: 'done' } & Stats)
   | { type: 'error'; message: string };
@@ -266,4 +276,5 @@ export interface Reply {
   sources?: DocRef[];
   routeReason?: string; // why the Auto choice picked this model
   excerpts?: Excerpt[]; // pieces of the uploaded documents that were used
+  files?: GeneratedFile[]; // files made for this reply
 }

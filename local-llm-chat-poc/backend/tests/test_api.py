@@ -12,7 +12,9 @@ from app import workflows
 from app.config import ModelsFile
 from app.documents import DocumentLibrary, split_text
 from app.llm import LLMError, ModelRegistry, StreamResult
-from app.main import app, base_scenario, corpus, get_library, get_registry, get_store, rules
+from app.actions import file_request
+from app.files import GeneratedFiles
+from app.main import app, base_scenario, corpus, get_files, get_library, get_registry, get_store, rules
 from app.router import choose_model
 from app.scenario import casualty_model, comms_model, force_model, mobility_model, weather_model
 from app.schemas import Message
@@ -88,12 +90,13 @@ class FakeRegistry(ModelRegistry):
 
 
 @pytest.fixture
-def setup(monkeypatch):
+def setup(monkeypatch, tmp_path):
     monkeypatch.setenv("TEST_LLM_BASE_URL", "http://fake/v1")
-    registry, store, library = FakeRegistry(), ConversationStore(), DocumentLibrary()
+    registry, store, library, made = FakeRegistry(), ConversationStore(), DocumentLibrary(), GeneratedFiles(str(tmp_path / "files"))
     app.dependency_overrides[get_registry] = lambda: registry
     app.dependency_overrides[get_store] = lambda: store
     app.dependency_overrides[get_library] = lambda: library
+    app.dependency_overrides[get_files] = lambda: made
     yield TestClient(app), registry, store
     app.dependency_overrides.clear()
 
@@ -352,6 +355,78 @@ def test_a_question_can_name_the_documents_to_answer_from(setup):
 
     gone = events(client.post("/api/chat", json={"message": "How much leave do I get?", "document_ids": ["0" * 32]}))
     assert [e["type"] for e in gone] == ["start", "delta", "delta", "done"]  # a removed document: answered without excerpts
+
+
+def test_a_short_picked_document_is_read_whole(setup):
+    client, registry, _ = setup
+    document_id = upload(client, "orders.txt", "Part one about travel.\n\nPart two about leave.").json()["id"]
+    stream = events(client.post("/api/chat", json={"message": "What is this document about?", "document_ids": [document_id]}))
+    assert stream[1]["excerpts"][0]["position"] == 0  # the whole document, not excerpts
+    sent = registry.prompts[-1][-1]["content"]
+    assert "given in full" in sent and "Part one about travel." in sent and "Part two about leave." in sent
+
+
+# ---------- files asked for in the chat ----------
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("crate a word doc of given doc", ("docx", True)),
+        ("we want to convert given doc in word format .word", ("docx", True)),
+        ("convert Liam_Dao.pdf to word", ("docx", True)),
+        ("make a powerpoint of this document", ("pptx", False)),
+        ("create a pdf report on winter readiness", ("pdf", False)),
+        ("write a summary of the document in word format", ("docx", False)),
+        ("make a pdf of your last answer", ("pdf", True)),
+        ("summarise the pdf", None),
+        ("Explain the word count of Liam_Dao.pdf", None),
+        ("what is a word", None),
+    ],
+)
+def test_file_requests_are_recognised(message, expected):
+    request = file_request(message)
+    assert (request and (request.format, request.as_is)) == expected
+
+
+def test_chat_converts_a_picked_document_to_word(setup):
+    import io
+    import zipfile
+
+    client, registry, store = setup
+    document_id = upload(client, "Liam_Dao.txt", "Liam Dao profile.\n\nServed in the northern sector for three years.").json()["id"]
+    stream = events(client.post("/api/chat", json={"message": "crate a word doc of given doc", "document_ids": [document_id]}))
+    assert [e["type"] for e in stream] == ["start", "excerpts", "delta", "file", "done"]
+    assert stream[0]["action"] == {"type": "file", "format": "docx", "label": "Converting to a Word document"}
+    assert registry.calls == []  # a conversion needs no model
+    made = stream[3]["file"]
+    assert made["filename"] == "Liam-Dao.docx" and made["format"] == "docx"
+
+    response = client.get(f"/api/files/{made['id']}")
+    assert response.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        assert "Served in the northern sector" in archive.read("word/document.xml").decode()
+    assert store.get(stream[0]["conversation_id"]).messages[1].files == [made]  # a reopened chat keeps the link
+
+    # A follow-up that only says "the given doc" uses the document picked earlier in the chat
+    again = events(client.post("/api/chat", json={"message": "convert the given doc to pdf", "conversation_id": stream[0]["conversation_id"]}))
+    assert again[3]["file"]["filename"] == "Liam-Dao.pdf"
+    assert client.get(f"/api/files/{again[3]['file']['id']}").content.startswith(b"%PDF")
+    assert client.get(f"/api/files/{'0' * 32}").status_code == 404
+
+
+def test_chat_writes_a_deck_with_the_model(setup):
+    client, registry, _ = setup
+    upload(client, "orders.txt", "Convoy departs at 0530 h from the transit camp.")
+    stream = events(client.post("/api/chat", json={"message": "make a powerpoint of this document"}))   # the only uploaded document
+    assert [e["type"] for e in stream] == ["start", "excerpts", "delta", "delta", "file", "done"]
+    sent = registry.prompts[-1][0]["content"]
+    assert "briefing presentation" in sent and "Convoy departs at 0530 h" in sent and registry.calls[-1]["system"].startswith("You are SAINIK AI")
+    assert stream[4]["file"]["format"] == "pptx"
+
+    plain = events(client.post("/api/chat", json={"message": "create a pdf report on winter readiness"}))
+    assert [e["type"] for e in plain] == ["start", "delta", "delta", "file", "done"]  # no document involved
+    assert registry.prompts[-1][0]["content"].endswith("for this request: create a pdf report on winter readiness")
 
 
 def test_documents_are_not_used_unless_asked(setup):

@@ -7,7 +7,7 @@ Replies are canned and say so. They name the model, which makes switching easy t
 
 Environment variables:
     MOCK_PORT=11500
-    MOCK_MODELS=gemma4:e2b-it-qat,llama3.2:3b    models reported as installed
+    MOCK_MODELS=gemma4:e4b,nemotron-3-nano:4b    models reported as installed
     MOCK_LOAD_MS=3000                            pretend time to load a model into memory
     MOCK_TPS=40                                  pretend generation speed, tokens per second
 """
@@ -22,7 +22,7 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-MODELS = [name.strip() for name in os.getenv("MOCK_MODELS", "gemma4:e2b-it-qat,llama3.2:3b").split(",") if name.strip()]
+MODELS = [name.strip() for name in os.getenv("MOCK_MODELS", "gemma4:e4b,nemotron-3-nano:4b").split(",") if name.strip()]
 PORT = int(os.getenv("MOCK_PORT", "11500"))
 LOAD_MS = int(os.getenv("MOCK_LOAD_MS", "3000"))
 TPS = float(os.getenv("MOCK_TPS", "40"))

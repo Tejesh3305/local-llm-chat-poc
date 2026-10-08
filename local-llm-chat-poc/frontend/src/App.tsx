@@ -113,7 +113,7 @@ export function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    try { localStorage.setItem('nextxr-theme', theme); } catch { /* storage unavailable */ }
+    try { localStorage.setItem('sainik-theme', theme); } catch { /* storage unavailable */ }
   }, [theme]);
 
   useEffect(() => {
@@ -135,12 +135,14 @@ export function App() {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <span id="brandName" className="brand-name">{BRAND.name}</span>
+          <div className="brand-id">
+            <span id="brandName" className="brand-name">{BRAND.name}</span>
+            <span id="brandTag" className="brand-tag">{BRAND.tagline}</span>
+          </div>
           <div id="views" className="views" role="tablist" aria-label="View">
             <button type="button" role="tab" data-view="chat" aria-selected={view === 'chat'} onClick={() => switchView('chat')}>Chat</button>
             <button type="button" role="tab" data-view="flows" aria-selected={view === 'flows'} onClick={() => switchView('flows')}>Workflows</button>
           </div>
-          <span id="brandTag" className="brand-tag">{BRAND.tagline}</span>
         </div>
         <ModelPicker models={models} selected={selected} loadingId={loadingId} engineUp={engineUp} onSelect={setModelId} />
         <div className="top-actions">

@@ -1,8 +1,8 @@
 // Wording that belongs to the page itself. Models, prompts and scenario data live in the backend.
 
 export const BRAND = {
-  name: 'NextXR',
-  tagline: 'Air-gapped AI Lab · local demo',
+  name: 'SAINIK AI',
+  tagline: '14 Corps Battlefield Intelligence System',
 };
 
 // Starter questions on an empty chat (Corpus off). With Corpus on, the scenario's own questions are shown.

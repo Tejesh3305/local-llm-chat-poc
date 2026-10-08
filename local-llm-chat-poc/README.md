@@ -1,10 +1,10 @@
-# NextXR local AI: chat and workflows
+# SAINIK AI: chat and workflows
 
 A React frontend and a FastAPI backend. The browser talks only to the backend; the backend talks to the local model runtime (Ollama) and does all the calculating and searching.
 
 ```text
 Browser (React)  ──►  FastAPI backend  ──►  Ollama on this machine
-  frontend/             backend/app/          gemma4:e2b-it-qat, llama3.2:3b
+  frontend/             backend/app/          gemma4:e4b, nemotron-3-nano:4b
 ```
 
 The page has two views, switched at the top left:
@@ -49,7 +49,7 @@ Nothing is fetched from the internet once this is installed. Because the browser
 | `backend/.env` | Where the runtime listens: `OLLAMA_BASE_URL=http://127.0.0.1:11434/v1` |
 | `backend/models.json` | The two models: the name shown, the Ollama tag (`provider_model`), vendor, licence, system prompt, temperature |
 
-The status line under the message box should read **Gemma 4 E2B ready in memory**. The sliders icon (top right) lists each model as installed or not, in memory or not, and the share on the GPU. The page asks the backend to load a model as soon as it is selected, so the load after a switch overlaps with typing the next question.
+The status line under the message box should read **Gemma 4 E4B ready in memory**. The sliders icon (top right) lists each model as installed or not, in memory or not, and the share on the GPU. The page asks the backend to load a model as soon as it is selected, so the load after a switch overlaps with typing the next question.
 
 Only one of the catalogue's models is kept in memory: before a model is loaded or asked for a reply, the backend unloads the other one. Models loaded by other tools are left alone.
 

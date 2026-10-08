@@ -1,6 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type FormEvent, type KeyboardEvent } from 'react';
 import { SUGGESTIONS } from '../config';
 import { generation } from '../generation';
+import { fileToDataUrl } from '../imageTools';
 import type { ConversationSummary, DocumentInfo, ModelInfo } from '../types';
 import type { ChatItem, Picked } from '../useChat';
 import { Icon } from './icons';
@@ -23,7 +24,7 @@ interface Props {
   corpusCount: number;
   scenario: { name: string; questions: string[] } | undefined;
   onToggleCorpus: () => void;
-  onSend: (text: string, picked: Picked) => void;
+  onSend: (text: string, picked: Picked, image?: string) => void;
   onRetry: (item: ChatItem) => void;
   onOpenDoc: (id: string) => void;
   auto: boolean; // the backend picks the model for each message
@@ -42,6 +43,14 @@ interface Props {
   onUpload: (file: File) => void;
   onDeleteDocument: (id: string) => void;
 }
+
+// One-click questions for an attached picture
+const PHOTO_PROMPTS = [
+  { label: 'Detect objects', text: 'Detect the objects in this picture.' },
+  { label: 'Detect vehicles', text: 'Detect and count the vehicles, including tanks and military trucks.' },
+  { label: 'Classify', text: 'Classify this picture.' },
+  { label: 'What is this?', text: 'What is this? Give details.' },
+];
 
 /** The "@word" being typed right before the caret, if any. `start` is the index of the @. */
 function mentionAt(text: string, caret: number): { start: number; query: string } | null {
@@ -102,6 +111,8 @@ export function ChatView(props: Props) {
   const [text, setText] = useState('');
   // Documents picked with @ for the next question, and the @ menu while it is open
   const [picked, setPicked] = useState<Picked>([]);
+  const [photo, setPhoto] = useState<{ url: string; name: string } | null>(null);   // a picture for the next message
+  const [photoError, setPhotoError] = useState('');
   const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
   const [active, setActive] = useState(0);
   const dismissed = useRef(-1);   // the @ whose menu was closed with Esc, so it stays closed
@@ -204,12 +215,37 @@ export function ChatView(props: Props) {
     if (busy || !message.trim()) return;
     pinned.current = true;
     setShowJump(false);
-    props.onSend(message, picked);
-    setPicked([]);   // the picked documents apply to this one question
+    props.onSend(message, picked, photo?.url);
+    setPicked([]);   // the picked documents and the picture apply to this one question
+    setPhoto(null);
+  };
+
+  /** A picture for the next message: shrunk in the browser, then sent with it. */
+  const attachPhoto = async (file: File) => {
+    setPhotoError('');
+    try {
+      setPhoto({ url: await fileToDataUrl(file), name: file.name || 'pasted picture' });
+      input.current?.focus();
+    } catch (failure) {
+      setPhotoError(failure instanceof Error ? failure.message : 'The picture could not be opened.');
+    }
+  };
+
+  // A picture pasted into the message box (Ctrl+V) is attached like a picked one
+  const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const file = [...event.clipboardData.files].find(entry => entry.type.startsWith('image/'));
+    if (file) {
+      event.preventDefault();
+      void attachPhoto(file);
+    }
   };
 
   const submit = () => {
-    if (busy || !text.trim()) return;
+    if (busy || !(text.trim() || photo)) return;
+    if (!text.trim()) {   // a picture on its own: say what it shows
+      send('Describe this picture.');
+      return;
+    }
     send(text);
     setText('');
     setMention(null);
@@ -266,7 +302,10 @@ export function ChatView(props: Props) {
   const onPick = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';   // the same file can be picked again
-    if (file) props.onUpload(file);
+    if (!file) return;
+    // A picture goes with the next message; a document joins the library, to be picked with @
+    if (file.type.startsWith('image/')) void attachPhoto(file);
+    else props.onUpload(file);
   };
 
   return (
@@ -295,6 +334,7 @@ export function ChatView(props: Props) {
                       {item.documents.map(name => <span key={name} className="mention-chip"><Icon.file />{name}</span>)}
                     </div>
                   )}
+                  {item.image && <img className="sent-photo" src={item.image} alt="Picture sent with the message" />}
                   <div className="bubble">{item.text}</div>
                 </div>
               );
@@ -339,9 +379,26 @@ export function ChatView(props: Props) {
             <span className="tools-gap" />
             <label className="tool attach" data-busy={uploading} title="Add a PDF, DOCX, TXT or MD file to the documents">
               <Icon.clip /><span>{uploading ? 'Reading the file…' : 'Attach'}</span>
-              <input type="file" accept=".pdf,.docx,.txt,.md" disabled={uploading} onChange={onPick} />
+              <input type="file" accept=".pdf,.docx,.txt,.md,image/png,image/jpeg,image/webp,image/gif,image/bmp" disabled={uploading} onChange={onPick} />
             </label>
           </div>
+          {photo && (
+            <div className="photo-tray">
+              <img src={photo.url} alt="" />
+              <div className="photo-info">
+                <span className="photo-name">{photo.name}</span>
+                <span className="studio-row">
+                  {PHOTO_PROMPTS.map(prompt => (
+                    <button key={prompt.label} type="button" className="chip-btn" title={prompt.text} onClick={() => { setText(prompt.text); input.current?.focus(); }}>
+                      {prompt.label}
+                    </button>
+                  ))}
+                </span>
+              </div>
+              <button type="button" className="icon-btn" aria-label="Remove the picture" title="Remove the picture" onClick={() => setPhoto(null)}><Icon.close /></button>
+            </div>
+          )}
+          {photoError && <div className="stale">{photoError}</div>}
           {picked.length > 0 && (
             <div className="mentions">
               <span className="refs-label">Answer only from</span>
@@ -381,7 +438,8 @@ export function ChatView(props: Props) {
               id="input" ref={input} rows={1} autoComplete="off" aria-label="Message" value={text}
               aria-controls={mention ? 'mentionMenu' : undefined} aria-expanded={!!mention}
               placeholder={
-                picked.length ? `Ask ${name} about ${picked.length === 1 ? picked[0].filename : `these ${picked.length} documents`}…`
+                photo ? 'Ask about the picture: detect tanks and vehicles, classify it, what is this…'
+                : picked.length ? `Ask ${name} about ${picked.length === 1 ? picked[0].filename : `these ${picked.length} documents`}…`
                   : corpus ? `Ask ${name} about the scenario…`
                     : documents.length ? `Message ${name}… (type @ to pick documents)`
                       : `Message ${name}…`
@@ -393,8 +451,9 @@ export function ChatView(props: Props) {
               onSelect={event => track(event.currentTarget)}
               onBlur={() => setMention(null)}
               onKeyDown={onKeyDown}
+              onPaste={onPaste}
             />
-            <button id="sendBtn" className="send" type="submit" data-mode={busy ? 'stop' : 'send'} aria-label={busy ? 'Stop' : 'Send'} disabled={!busy && !text.trim()}>
+            <button id="sendBtn" className="send" type="submit" data-mode={busy ? 'stop' : 'send'} aria-label={busy ? 'Stop' : 'Send'} disabled={!busy && !text.trim() && !photo}>
               <span className="i-send"><Icon.up /></span><span className="i-stop"><Icon.stop /></span>
             </button>
           </form>

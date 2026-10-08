@@ -23,6 +23,7 @@ from .corpus import Corpus, extracts, reference
 from .documents import SUPPORTED, DocumentError, DocumentLibrary, with_documents, with_excerpts
 from .files import GeneratedFiles
 from .imagegen import ImageGenerator
+from .vision import Detector, summary_line, targets_for
 from .llm import LLMError, ModelRegistry, ProviderNotConfiguredError, StreamResult, UnknownModelError
 from .router import choose_model
 from .scenario import Scenario, digest, situation
@@ -30,6 +31,7 @@ from .schemas import (
     ChatRequest,
     Conversation,
     ConversationSummary,
+    DetectRequest,
     DocumentAnalysisRequest,
     DocumentInfo,
     DraftRequest,
@@ -60,6 +62,7 @@ library = DocumentLibrary(settings.database_path)
 files = GeneratedFiles(settings.files_path)
 images = ImageGenerator(str(BACKEND_DIR / settings.image_model_dir))
 images.warm_up()
+detector = Detector(str(BACKEND_DIR / settings.detection_model_dir))
 
 # Workflow data. All of it is sample data for the exercise scenario; see data/*.json.
 base_scenario: Scenario = load_data_file(settings.data_dir, "scenario.json")
@@ -108,6 +111,10 @@ def get_files() -> GeneratedFiles:
 
 def get_images() -> ImageGenerator:
     return images
+
+
+def get_detector() -> Detector:
+    return detector
 
 
 def resolve_model(registry: ModelRegistry, model_id: str) -> ModelConfig:
@@ -239,6 +246,7 @@ class ChatContext:
     sources: list[dict] | None = None  # the documents found, when Corpus is on
     file: actions.FileRequest | None = None  # the message asks for a PDF, Word or PowerPoint file
     picture: actions.PictureRequest | None = None  # the message asks for a picture
+    image: str | None = None  # a picture sent with the message (data URL)
 
 
 async def prepare_chat(
@@ -278,6 +286,17 @@ async def prepare_chat(
         thinking=body.thinking, use_documents=body.use_documents or bool(body.document_ids),
         document_ids=body.document_ids or None, route_reason=route_reason,
     )
+    if body.image:
+        # A picture with the message: answered by a model that can read images (and the detector, when asked)
+        if len(body.image) > MAX_IMAGE_CHARS:
+            raise HTTPException(413, "The picture is too large. Use one under 6 MB.")
+        context.image = body.image
+        if "vision" not in model.tags:
+            reader = next((m for m in registry.config.models if "vision" in m.tags and m.provider in registry.clients), None)
+            if reader is None:
+                raise HTTPException(400, 'No model in models.json can read images. Tag one with "vision".')
+            context.model, context.route_reason = reader, ("picture attached" if body.model == AUTO_MODEL else context.route_reason)
+        return context
     if not body.grounded:
         context.file = actions.file_request(body.message)
         context.picture = None if context.file else actions.picture_request(body.message)
@@ -310,8 +329,13 @@ async def chat(
     library: DocumentLibrary = Depends(get_library),
     files: GeneratedFiles = Depends(get_files),
     images: ImageGenerator = Depends(get_images),
+    detector: Detector = Depends(get_detector),
 ) -> AsyncIterable[dict]:
     """Streams Server-Sent Events: start -> (excerpts) -> delta... -> (file) -> done (or error)."""
+    if ctx.image:
+        async for event in vision_turn(ctx, registry, store, files, detector):
+            yield event
+        return
     if ctx.file:
         async for event in file_turn(ctx, registry, store, library, files):
             yield event
@@ -531,6 +555,129 @@ async def picture_turn(
         Message(role="assistant", content=reply, model=ctx.model.id, stats=stats(result), files=[made]),
     )
     yield {"type": "done", **stats(result)}
+
+
+def decode_image(data_url: str) -> tuple[bytes, str]:
+    """The bytes and file extension of a picture sent as a data URL."""
+    header, data = data_url.split(",", 1)
+    return base64.b64decode(data), "jpg" if "jpeg" in header else header.split("/")[1].split(";")[0]
+
+
+async def run_detection(registry: ModelRegistry, detector: Detector, image: bytes, wanted: str) -> tuple[bytes, list[dict], dict, bool]:
+    """Boxes for the objects named in `wanted` (or the default military and everyday list). Holds the model slot:
+    the detector shares the GPU, so it does not run while a picture is being drawn."""
+    targets, named = targets_for(wanted)
+    async with registry.slot:
+        boxed, found, info = await asyncio.to_thread(detector.detect, image, targets)
+    info["looked_for"] = [label for label, _ in targets] if named else []
+    return boxed, found, info, named
+
+
+async def vision_turn(ctx: ChatContext, registry: ModelRegistry, store: ConversationStore, files: GeneratedFiles, detector: Detector) -> AsyncIterable[dict]:
+    """A message with a picture: object detection (boxes), classification, or any question about the picture.
+
+    Detection runs OWLv2 first, then the vision model explains what was found. Everything else goes to the
+    vision model with the picture.
+    """
+    intent = actions.vision_intent(ctx.message)
+    engine = detector.status()
+    detecting = intent == "detect" and engine["available"]
+    label = "Detecting objects with OWLv2" if detecting else "Classifying the picture" if intent == "classify" else "Looking at the picture"
+    yield {
+        "type": "start", "conversation_id": ctx.conversation.id, "model": ctx.model.id,
+        "route_reason": ctx.route_reason, "action": {"type": "vision", "intent": intent, "label": label},
+    }
+    raw, extension = decode_image(ctx.image)
+    sent = files.save(raw, f"picture.{extension}", "png" if extension == "png" else "jpg")
+
+    made: list[dict] = []
+    lead = ""
+    if intent == "detect" and not engine["available"]:
+        lead = f"*Object detection is not installed, so the boxes cannot be drawn ({engine['reason']}). Here is what the model sees instead.*\n\n"
+        task = f"{ctx.message}\n\nList each kind of object you can see in the picture, how many, and where (left, centre, right, top, bottom)."
+    elif detecting:
+        try:
+            boxed, found, info, named = await run_detection(registry, detector, raw, ctx.message)
+        except Exception as error:
+            logger.exception("object detection failed")
+            yield {"type": "error", "message": f"Object detection failed: {error}"}
+            return
+        made.append(files.save(boxed, "detections.png", "png"))
+        yield {"type": "file", "file": made[0]}
+        what = ", ".join(info["looked_for"]) if named else "military and everyday objects"
+        if found:
+            rows = "\n".join(f"| {d['label']} | {round(d['score'] * 100)}% |" for d in found[:15])
+            lead = (
+                f"**Detected ({engine['model']}, {info['seconds']} s on {info['device']}):** {summary_line(found)}.\n\n"
+                f"| Object | Confidence |\n|---|---|\n{rows}\n\n"
+            )
+            listing = "; ".join(f"{d['label']} ({round(d['score'] * 100)}%, box {[round(v) for v in d['box']]})" for d in found[:25])
+            task = (
+                f"{ctx.message}\n\nAn object detector looked for {what} and found: {listing}. "
+                f"The picture is {info['width']} x {info['height']} pixels. In 2 to 5 short sentences, say what the picture shows, "
+                "answer the question using these detections, and point out any detection that looks wrong or anything it missed."
+            )
+        else:
+            lead = f"**No {what} found** by {engine['model']} ({info['seconds']} s). Small, distant or hidden objects can be missed.\n\n"
+            task = f"{ctx.message}\n\nAn object detector looked for {what} and found nothing. Say briefly what the picture does show."
+    elif intent == "classify":
+        task = f"{studio.CLASSIFY_PROMPT}\n\nThe user asked: {ctx.message}"
+    else:
+        task = ctx.message
+
+    if lead:
+        yield {"type": "delta", "text": lead}
+    # Earlier turns as plain text; only this message carries the picture
+    history = [{"role": m.role, "content": m.content} for m in ctx.conversation.messages][-settings.max_history_messages :]
+    history.append({"role": "user", "content": [{"type": "text", "text": task}, {"type": "image_url", "image_url": {"url": ctx.image}}]})
+    parts: list[str] = []
+    result = StreamResult()
+    try:
+        async with registry.slot:
+            await registry.activate(ctx.model)
+            async for piece in registry.stream_chat(ctx.model, history, result, system=studio.VISION_SYSTEM, temperature=0.3, max_tokens=900):
+                parts.append(piece)
+                yield {"type": "delta", "text": piece}
+    except LLMError as error:
+        logger.warning("vision chat failed (model=%s): %s", ctx.model.id, error.__cause__ or error)
+        if not made:
+            yield {"type": "error", "message": error.user_message}
+            return
+        note = f"\n\n*The model could not add an explanation: {error.user_message}*"
+        parts.append(note)
+        yield {"type": "delta", "text": note}
+
+    store.add_turn(
+        ctx.conversation,
+        Message(role="user", content=ctx.message, image_file=sent),
+        Message(role="assistant", content=lead + "".join(parts), model=ctx.model.id, route_reason=ctx.route_reason, stats=stats(result), files=made),
+    )
+    yield {"type": "done", **stats(result)}
+
+
+@app.get("/api/studio/detect-engine")
+def detect_engine(detector: Detector = Depends(get_detector)):
+    """Whether object detection is installed, and if not, why not."""
+    return detector.status()
+
+
+@app.post("/api/studio/detect")
+async def studio_detect(body: DetectRequest, registry: ModelRegistry = Depends(get_registry), detector: Detector = Depends(get_detector)):
+    """Boxes around the objects in a picture: the ones named in `objects`, or military and everyday objects."""
+    if len(body.image) > MAX_IMAGE_CHARS:
+        raise HTTPException(413, "The picture is too large. Use one under 6 MB.")
+    if not detector.status()["available"]:
+        raise HTTPException(503, detector.status()["reason"])
+    raw, _ = decode_image(body.image)
+    try:
+        boxed, found, info, named = await run_detection(registry, detector, raw, f"detect {body.objects}" if body.objects.strip() else "")
+    except Exception as error:
+        logger.exception("object detection failed")
+        raise HTTPException(500, f"Object detection failed: {error}")
+    return {
+        "image": "data:image/png;base64," + base64.b64encode(boxed).decode(),
+        "detections": found, "summary": summary_line(found), "model": detector.status()["model"], **info,
+    }
 
 
 @app.get("/api/files/{file_id}")

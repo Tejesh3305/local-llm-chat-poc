@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
-import { AUTO, fetchConversation, streamEvents, type Inputs } from './api';
+import { AUTO, fetchConversation, fileUrl, streamEvents, type Inputs } from './api';
 import { addText, fail, finish, generation, interrupt, newReply, storedReply } from './generation';
 import type { ChatEvent, DocumentInfo, ModelInfo, Reply } from './types';
 
@@ -7,8 +7,8 @@ import type { ChatEvent, DocumentInfo, ModelInfo, Reply } from './types';
 export type Picked = Pick<DocumentInfo, 'id' | 'filename'>[];
 
 export type ChatItem =
-  | { kind: 'user'; id: number; text: string; documents: string[] }
-  | { kind: 'reply'; id: number; reply: Reply; question: string; grounded: boolean; picked: Picked }
+  | { kind: 'user'; id: number; text: string; documents: string[]; image?: string }   // image: shown with the question
+  | { kind: 'reply'; id: number; reply: Reply; question: string; grounded: boolean; picked: Picked; image?: string }   // image: the data URL sent, for Retry
   | { kind: 'switch'; id: number; model: ModelInfo };
 
 interface Options {
@@ -42,11 +42,11 @@ export function useChat(options: Options) {
     });
   }, []);
 
-  const generate = useCallback(async (question: string, grounded: boolean, picked: Picked) => {
+  const generate = useCallback(async (question: string, grounded: boolean, picked: Picked, image?: string) => {
     const { model, auto, thinking, inputs, onSettled } = latest.current;
     if (!model || generation.owner) return;
     const reply = newReply(model);
-    const item: ChatItem = { kind: 'reply', id: nextId.current++, reply, question, grounded, picked };
+    const item: ChatItem = { kind: 'reply', id: nextId.current++, reply, question, grounded, picked, image };
     items.current = [...items.current, item];
     const controller = generation.begin('chat');
     bump();
@@ -55,7 +55,7 @@ export function useChat(options: Options) {
       const body = {
         message: question, model: auto ? AUTO : model.id, conversation_id: conversationId.current,
         grounded, inputs: grounded ? inputs : {}, thinking: auto ? undefined : thinking,
-        document_ids: picked.map(doc => doc.id),
+        document_ids: picked.map(doc => doc.id), image,
       };
       for await (const event of streamEvents<ChatEvent>('/api/chat', body, controller.signal)) {
         if (event.type === 'start') {
@@ -101,22 +101,22 @@ export function useChat(options: Options) {
     }
   }, [touch]);
 
-  /** Send a question; `picked` (documents chosen with @) limits the answer to those documents. */
-  const send = useCallback((text: string, picked: Picked = []) => {
+  /** Send a question; `picked` (documents chosen with @) limits the answer to those documents; `image` is a picture to ask about. */
+  const send = useCallback((text: string, picked: Picked = [], image?: string) => {
     const question = text.trim();
     if (!question || generation.owner || !latest.current.model) return;
     // A failed turn that produced nothing is replaced by the new one
     const last = items.current.at(-1);
     if (last?.kind === 'reply' && last.reply.status === 'error' && !last.reply.content) items.current = items.current.slice(0, -1);
-    items.current = [...items.current, { kind: 'user', id: nextId.current++, text: question, documents: picked.map(doc => doc.filename) }];
-    void generate(question, latest.current.corpus, picked);
+    items.current = [...items.current, { kind: 'user', id: nextId.current++, text: question, documents: picked.map(doc => doc.filename), image }];
+    void generate(question, latest.current.corpus, picked, image);
   }, [generate]);
 
-  /** Run the failed reply's question again, with the model selected now and the same documents. */
+  /** Run the failed reply's question again, with the model selected now and the same documents and picture. */
   const retry = useCallback((item: ChatItem) => {
     if (item.kind !== 'reply' || generation.owner) return;
     items.current = items.current.filter(entry => entry !== item);
-    void generate(item.question, item.grounded, item.picked);
+    void generate(item.question, item.grounded, item.picked, item.image);
   }, [generate]);
 
   const newChat = useCallback(() => {
@@ -137,7 +137,8 @@ export function useChat(options: Options) {
     for (const message of conversation.messages) {
       if (message.role === 'user') {
         question = message.content;
-        list.push({ kind: 'user', id: nextId.current++, text: message.content, documents: message.documents ?? [] });
+        const image = message.image_file ? fileUrl(message.image_file.id) : undefined;
+        list.push({ kind: 'user', id: nextId.current++, text: message.content, documents: message.documents ?? [], image });
       } else {
         // A model that has since left the catalogue is shown under its id
         const author = models.find(entry => entry.id === message.model) ?? { ...model, id: message.model ?? model.id, label: message.model ?? model.label, vendor: '' };

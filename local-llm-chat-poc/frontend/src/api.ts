@@ -95,6 +95,11 @@ export const fetchOutline = async (format: ExportFormat, title: string, content:
 export const makeImage = async (prompt: string, style: string, engine: 'model' | 'demo', steps: number): Promise<StudioImage> =>
   (await request('/api/studio/image', post({ prompt, style, engine, steps }))).json();
 
+export const fetchDetectEngine = async (): Promise<{ available: boolean; model: string; reason: string }> => (await request('/api/studio/detect-engine')).json();
+
+/** Boxes around the objects in a picture: the ones named in `objects`, or military and everyday objects. */
+export const detectObjects = async (image: string, objects: string) => (await request('/api/studio/detect', post({ image, objects }))).json();
+
 export const fetchImageEngine = async (): Promise<ImageEngine> => (await request('/api/studio/image-engine')).json();
 
 export const fetchInsights = async (id: string): Promise<DocumentInsights> => (await request(`/api/documents/${id}/insights`)).json();

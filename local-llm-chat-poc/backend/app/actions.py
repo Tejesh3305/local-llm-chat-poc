@@ -113,6 +113,23 @@ def picture_request(message: str) -> PictureRequest | None:
     return PictureRequest(subject, style)
 
 
+DETECT = re.compile(
+    r"\b(detect\w*|locate|spot|count|how many|bounding|draw boxes|mark (the|all|every)|"
+    r"find (all|the|every|any)|where (is|are) the|identify (all|every|any)?\s*(the\s+)?(objects|vehicles|people|targets|persons|soldiers|weapons))\b",
+    re.I,
+)
+CLASSIFY = re.compile(r"\b(classif\w*|categori\w*|what (type|kind|class|category|sort)|which (type|kind|class|category)|is (this|it) an? )", re.I)
+
+
+def vision_intent(message: str) -> str:
+    """What a message sent with a picture asks for: "detect" (boxes), "classify" (a category) or "ask" (anything else)."""
+    if DETECT.search(message):
+        return "detect"
+    if CLASSIFY.search(message):
+        return "classify"
+    return "ask"
+
+
 def _target(message: str, found: list[tuple[int, str]]) -> str:
     """'convert the pdf file to word' names two formats: the one after the last to/into/as is the one wanted."""
     marks = list(re.finditer(r"\b(to|into|as)\b", message, re.I))

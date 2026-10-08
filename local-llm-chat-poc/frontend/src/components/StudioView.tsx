@@ -1,5 +1,5 @@
 import { useEffect, useReducer, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from 'react';
-import { exportFile, fetchImageEngine, fetchInsights, fetchOutline, makeImage, saveFile, streamEvents } from '../api';
+import { detectObjects, exportFile, fetchDetectEngine, fetchImageEngine, fetchInsights, fetchOutline, makeImage, saveFile, streamEvents } from '../api';
 import { addText, fail, finish, generation, interrupt, newReply } from '../generation';
 import { applyFilter, FILTERS, loadImage, measure, toCanvas, type Filter } from '../imageTools';
 import type { DocumentInfo, DocumentInsights, ExportFormat, ImageEngine, ModelInfo, OutlineResponse, Reply, StudioEvent, StudioImage } from '../types';
@@ -478,12 +478,33 @@ const IMAGE_TASKS: { id: string; label: string; detail: string }[] = [
   { id: 'describe', label: 'Describe', detail: 'What the picture shows, in detail' },
   { id: 'summary', label: 'Report summary', detail: 'Bullet points ready for a report' },
   { id: 'text', label: 'Read text', detail: 'Signs, labels and numbers in the picture' },
+  { id: 'classify', label: 'Classify', detail: 'Category, type, confidence and the features that show it' },
 ];
+
+const DETECT_IDEAS = ['tanks and military trucks', 'soldiers', 'aircraft and helicopters', 'cars and people'];
+
+interface Detection {
+  image: string;
+  detections: { label: string; score: number; box: number[] }[];
+  summary: string;
+  model: string;
+  seconds: number;
+  device: string;
+  looked_for: string[];
+}
 
 function ImageLab({ hidden, model, models, generating }: { hidden: boolean; model: ModelInfo | undefined; models: ModelInfo[]; generating: string | null }) {
   const [picture, setPicture] = useState<{ name: string; size: number; url: string; image: HTMLImageElement; facts: { width: number; height: number; brightness: number; colour: string } } | null>(null);
-  const [filtered, setFiltered] = useState<{ filter: Filter; url: string } | null>(null);
+  const [filtered, setFiltered] = useState<{ filter: Filter | 'detect'; url: string } | null>(null);
   const [error, setError] = useState('');
+  const [detectEngine, setDetectEngine] = useState<{ available: boolean; reason: string } | null>(null);
+  const [wanted, setWanted] = useState('');
+  const [detecting, setDetecting] = useState(false);
+  const [detection, setDetection] = useState<Detection | null>(null);
+
+  useEffect(() => {
+    if (!hidden && !detectEngine) fetchDetectEngine().then(setDetectEngine, () => setDetectEngine(null));
+  }, [hidden, detectEngine]);
   const [over, setOver] = useState(false);
   const reader = model?.tags.includes('vision') ? model : models.find(entry => entry.tags.includes('vision')) ?? model;
   const analysis = useModelRun(models, reader);
@@ -503,6 +524,7 @@ function ImageLab({ hidden, model, models, generating }: { hidden: boolean; mode
       if (picture) URL.revokeObjectURL(picture.url);
       setPicture({ name: file.name, size: file.size, url, image, facts: { width: image.naturalWidth, height: image.naturalHeight, ...facts } });
       setFiltered(null);
+      setDetection(null);
       analysis.clear();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'The picture could not be opened.');
@@ -519,6 +541,21 @@ function ImageLab({ hidden, model, models, generating }: { hidden: boolean; mode
     if (!picture) return;
     const canvas = applyFilter(toCanvas(picture.image, 1600), id);
     setFiltered({ filter: id, url: canvas.toDataURL('image/png') });
+  };
+
+  const detect = async () => {
+    if (!picture || detecting) return;
+    setDetecting(true);
+    setError('');
+    try {
+      const result = await detectObjects(toCanvas(picture.image, 1280).toDataURL('image/jpeg', 0.9), wanted);
+      setDetection(result);
+      setFiltered({ filter: 'detect', url: result.image });
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Object detection failed.');
+    } finally {
+      setDetecting(false);
+    }
   };
 
   const analyse = (task: string) => {
@@ -545,13 +582,55 @@ function ImageLab({ hidden, model, models, generating }: { hidden: boolean; mode
             <figure><img src={picture.url} alt="Original" /><figcaption>Original</figcaption></figure>
             <figure>
               {filtered ? <img src={filtered.url} alt={filtered.filter} /> : <div className="compare-empty">Pick a filter to see the result here</div>}
-              <figcaption>{filtered ? FILTERS.find(entry => entry.id === filtered.filter)?.label : 'Processed'}</figcaption>
+              <figcaption>{filtered ? (filtered.filter === 'detect' ? 'Detected objects' : FILTERS.find(entry => entry.id === filtered.filter)?.label) : 'Processed'}</figcaption>
             </figure>
           </div>
           <div className="studio-row">
             <span className="tag">brightness {picture.facts.brightness}%</span>
             <span className="tag"><span className="swatch" style={{ background: picture.facts.colour }} />average colour {picture.facts.colour}</span>
           </div>
+
+          <section className="card">
+            <div className="card-head"><h3>Detect objects</h3><span className="tag model">OWLv2 · on this machine</span></div>
+            {detectEngine && !detectEngine.available ? (
+              <div className="stale">{detectEngine.reason}</div>
+            ) : (
+              <>
+                <p className="card-note">Name what to look for, or leave it empty to look for military equipment (tanks, armoured vehicles, artillery, aircraft, soldiers…) and everyday objects (cars, trucks, people…).</p>
+                <div className="studio-row">
+                  <input className="studio-input grow" value={wanted} placeholder="e.g. tanks and military trucks" onChange={event => setWanted(event.target.value)}
+                    onKeyDown={event => { if (event.key === 'Enter') void detect(); }} aria-label="Objects to look for" />
+                  <button type="button" className="btn primary" disabled={detecting} onClick={() => void detect()}><Icon.scan />{detecting ? 'Detecting…' : 'Detect'}</button>
+                </div>
+                <div className="studio-row">
+                  {DETECT_IDEAS.map(idea => <button key={idea} type="button" className="chip-btn" onClick={() => setWanted(idea)}>{idea}</button>)}
+                </div>
+                {detection && (
+                  <>
+                    <p className="card-note">
+                      <b>{detection.summary || 'Nothing found'}</b> · {detection.model}, {detection.seconds} s on {detection.device} · looked for{' '}
+                      {detection.looked_for.length ? detection.looked_for.join(', ') : 'military and everyday objects'}
+                    </p>
+                    {detection.detections.length > 0 && (
+                      <div className="table-wrap">
+                        <table>
+                          <thead><tr><th>Object</th><th>Confidence</th><th>Position (x, y, width, height in pixels)</th></tr></thead>
+                          <tbody>
+                            {detection.detections.map((item, index) => (
+                              <tr key={index}>
+                                <td>{item.label}</td><td>{Math.round(item.score * 100)}%</td>
+                                <td>{Math.round(item.box[0])}, {Math.round(item.box[1])}, {Math.round(item.box[2] - item.box[0])} × {Math.round(item.box[3] - item.box[1])}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </>
+                )}
+              </>
+            )}
+          </section>
 
           <section className="card">
             <div className="card-head"><h3>Enhance and transform</h3><span className="tag">On this machine, no model</span></div>

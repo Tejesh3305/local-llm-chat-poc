@@ -85,7 +85,7 @@ export type ExportFormat = 'pdf' | 'docx' | 'pptx';
 export interface GeneratedFile {
   id: string;
   filename: string;
-  format: ExportFormat | 'png' | 'svg'; // png/svg: a picture drawn in the chat
+  format: ExportFormat | 'png' | 'svg' | 'jpg' | 'webp'; // pictures: drawn in the chat, boxed by object detection, or sent
   size_bytes: number;
 }
 
@@ -140,6 +140,7 @@ export interface StoredMessage {
   content: string;
   model: string | null;
   documents: string[]; // user message: the documents picked with @, by file name
+  image_file?: GeneratedFile | null; // user message: the picture sent with it
   route_reason: string | null;
   grounded: boolean;
   sources: DocRef[] | null;
@@ -167,7 +168,7 @@ export interface Stats {
 
 // Server-Sent Events sent by POST /api/chat
 export type ChatEvent =
-  | { type: 'start'; conversation_id: string; model: string; sources?: DocRef[]; route_reason?: string; action?: { type: 'file' | 'image'; format?: ExportFormat; label: string } }
+  | { type: 'start'; conversation_id: string; model: string; sources?: DocRef[]; route_reason?: string; action?: { type: 'file' | 'image' | 'vision'; format?: ExportFormat; intent?: string; label: string } }
   | { type: 'excerpts'; excerpts: Excerpt[] }
   | { type: 'file'; file: GeneratedFile }
   | { type: 'delta'; text: string }

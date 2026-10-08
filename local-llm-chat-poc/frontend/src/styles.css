@@ -575,6 +575,13 @@ a.btn.primary { color: var(--on-brand); }
 .chat-picture img { display: block; width: 100%; border: 1px solid var(--line-strong); border-radius: var(--pill); background: var(--surface-2); }
 .chat-picture figcaption { display: flex; align-items: center; justify-content: space-between; gap: .6rem; color: var(--ink-3); font-size: .8rem; }
 
+/* a picture attached to the next message, and one sent with a question */
+.photo-tray { display: flex; align-items: center; gap: .7rem; margin-bottom: .45rem; padding: .45rem .5rem; border: 1px solid var(--line-strong); border-left: 4px solid var(--brand); border-radius: var(--pill); background: var(--surface); }
+.photo-tray img { width: 4.2rem; height: 4.2rem; object-fit: cover; flex: none; border-radius: 3px; border: 1px solid var(--line); }
+.photo-info { display: grid; gap: .3rem; flex: 1; min-width: 0; }
+.photo-name { overflow: hidden; color: var(--ink-2); font-size: .82rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.sent-photo { display: block; max-width: min(18rem, 100%); max-height: 14rem; margin: 0 0 .35rem auto; border: 1px solid var(--line-strong); border-radius: 8px 8px 2px 8px; object-fit: contain; background: var(--surface-2); }
+
 /* documents picked with @ */
 .composer { position: relative; }
 .mention-menu {

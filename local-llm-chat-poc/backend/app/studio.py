@@ -43,6 +43,8 @@ FORMATS = {
     "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     "png": "image/png",  # pictures drawn in the chat
     "svg": "image/svg+xml",
+    "jpg": "image/jpeg",  # photos sent with a chat message
+    "webp": "image/webp",
 }
 
 
@@ -484,3 +486,19 @@ IMAGE_TASKS = {
     "summary": ("Report summary", "Write a short report-style summary of this image: 3 to 5 bullet points a staff officer could paste into a report."),
     "text": ("Read text", "Read out any text, numbers, signs or labels visible in this image, exactly as written. If there is none, say so."),
 }
+
+CLASSIFY_PROMPT = (
+    "Classify this image. Answer in this form:\n"
+    "**Category:** one of: military vehicle, civilian vehicle, aircraft, watercraft, weapon, military personnel, civilians, "
+    "military installation, building or infrastructure, terrain or landscape, document or map, animal, other.\n"
+    "**Type:** the specific kind (for example main battle tank, armoured personnel carrier, pickup truck, attack helicopter).\n"
+    "**Confidence:** high, medium or low, and why.\n"
+    "**Key features:** 2 to 4 visible details that support the answer.\n"
+    "Do not guess an exact model or country unless markings make it clear; say if it cannot be told from the picture."
+)
+IMAGE_TASKS["classify"] = ("Classify", CLASSIFY_PROMPT)
+
+VISION_SYSTEM = (
+    "You are SAINIK AI, analysing pictures for a staff officer. Say only what you can see in the picture; "
+    "when unsure, say so and give your confidence. Be concise and use Markdown."
+)

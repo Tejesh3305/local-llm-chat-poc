@@ -11,3 +11,4 @@ transformers==5.19.0
 accelerate==1.15.0
 huggingface_hub==1.33.0
 safetensors==0.8.0
+scipy==1.17.1  # object detection (OWLv2) prepares pictures with it

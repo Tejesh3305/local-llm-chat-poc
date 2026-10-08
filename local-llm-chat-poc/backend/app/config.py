@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     storage_dir: str = "storage"
     # Optional image model for AI Studio (scripts/get_image_model.py puts it here)
     image_model_dir: str = "models/sd-turbo"
+    # Optional object detection model (scripts/get_detection_model.py puts it here)
+    detection_model_dir: str = "models/owlv2"
 
     cors_origins: str = "http://localhost:5173"  # comma-separated
 

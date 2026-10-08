@@ -14,7 +14,7 @@ from app.documents import DocumentLibrary, split_text
 from app.llm import LLMError, ModelRegistry, StreamResult
 from app.actions import file_request
 from app.files import GeneratedFiles
-from app.main import app, base_scenario, corpus, get_files, get_images, get_library, get_registry, get_store, rules
+from app.main import app, base_scenario, corpus, get_detector, get_files, get_images, get_library, get_registry, get_store, rules
 from app.router import choose_model
 from app.scenario import casualty_model, comms_model, force_model, mobility_model, weather_model
 from app.schemas import Message
@@ -104,6 +104,22 @@ class FakeImages:
         return b"\x89PNG fake", {"prompt_used": f"{prompt}, {style}", "steps": steps, "seed": seed, "seconds": 0.1, "width": 512, "height": 512}
 
 
+class FakeDetector:
+    """Stands in for OWLv2: 'finds' one box per target asked for."""
+
+    def __init__(self, available: bool = True):
+        self.available = available
+        self.asked: list[list[str]] = []
+
+    def status(self):
+        return {"available": self.available, "model": "OWLv2", "reason": "" if self.available else "The detection model is not downloaded."}
+
+    def detect(self, image_bytes, targets, threshold=0.2):
+        self.asked.append([label for label, _ in targets])
+        found = [{"label": label, "score": 0.6, "box": [10.0, 10.0, 50.0, 40.0]} for label, _ in targets[:2]]
+        return b"\x89PNG boxed", found, {"seconds": 0.5, "device": "GPU", "width": 640, "height": 480}
+
+
 @pytest.fixture
 def setup(monkeypatch, tmp_path):
     monkeypatch.setenv("TEST_LLM_BASE_URL", "http://fake/v1")
@@ -113,6 +129,7 @@ def setup(monkeypatch, tmp_path):
     app.dependency_overrides[get_library] = lambda: library
     app.dependency_overrides[get_files] = lambda: made
     app.dependency_overrides[get_images] = lambda: FakeImages()
+    app.dependency_overrides[get_detector] = lambda: FakeDetector()
     yield TestClient(app), registry, store
     app.dependency_overrides.clear()
 
@@ -506,6 +523,88 @@ def test_chat_draws_a_picture(setup):
     again = events(client.post("/api/chat", json={"message": "try again", "conversation_id": demo[0]["conversation_id"]}))
     assert again[2]["file"]["format"] == "png" and model.calls[-1][:2] == ("cat", "photo")
     assert events(client.post("/api/chat", json={"message": "try again"}))[1]["type"] == "delta" and registry.calls
+
+
+# ---------- pictures sent with a message: detection, classification, questions ----------
+
+PHOTO = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ=="
+
+
+@pytest.mark.parametrize(
+    ("message", "intent"),
+    [
+        ("detect objects in this image", "detect"),
+        ("how many tanks are there?", "detect"),
+        ("find all the soldiers", "detect"),
+        ("count the vehicles", "detect"),
+        ("classify this image", "classify"),
+        ("what type of vehicle is this?", "classify"),
+        ("is this a tank or a truck?", "classify"),
+        ("tell me about this helicopter", "ask"),
+        ("describe the scene", "ask"),
+    ],
+)
+def test_vision_intents(message, intent):
+    from app.actions import vision_intent
+
+    assert vision_intent(message) == intent
+
+
+def test_detection_targets_follow_the_message():
+    from app.vision import summary_line, targets_for
+
+    assert [label for label, _ in targets_for("how many tanks and trucks?")[0]] == ["tank", "truck"]
+    assert [label for label, _ in targets_for("find the soldiers and the helicopter")[0]] == ["soldier", "helicopter"]
+    assert [label for label, _ in targets_for("count the military trucks")[0]] == ["military truck"]
+    assert targets_for("detect the red flags")[0] == [("red flag", ["a red flag"])]  # not in the list: asked as written
+    default, named = targets_for("detect objects in this image")
+    assert not named and [label for label, _ in default][:3] == ["tank", "armoured vehicle", "military truck"] and "car" in dict(default)
+    assert summary_line([{"label": "tank"}, {"label": "tank"}, {"label": "car"}]) == "2 tanks, 1 car"
+
+
+def test_chat_detects_objects_in_a_picture(setup):
+    client, registry, store = setup
+    detector = FakeDetector()
+    app.dependency_overrides[get_detector] = lambda: detector
+    stream = events(client.post("/api/chat", json={"message": "how many tanks and trucks?", "image": PHOTO, "model": "coder"}))
+    assert [e["type"] for e in stream][:3] == ["start", "file", "delta"] and stream[-1]["type"] == "done"
+    assert stream[0]["model"] == "general"  # "coder" cannot read pictures, so the vision model answers
+    assert stream[0]["action"] == {"type": "vision", "intent": "detect", "label": "Detecting objects with OWLv2"}
+    assert detector.asked == [["tank", "truck"]] and stream[1]["file"]["format"] == "png"
+    assert stream[2]["text"].startswith("**Detected (OWLv2, 0.5 s on GPU):** 1 tank, 1 truck.")
+    question = registry.prompts[-1][-1]["content"]
+    assert question[1] == {"type": "image_url", "image_url": {"url": PHOTO}} and "tank (60%" in question[0]["text"]
+
+    saved = store.get(stream[0]["conversation_id"]).messages
+    assert saved[0].image_file["format"] == "jpg" and saved[1].files == [stream[1]["file"]]
+    assert client.get(f"/api/files/{saved[0].image_file['id']}").headers["content-type"] == "image/jpeg"
+
+
+def test_chat_classifies_and_answers_about_a_picture(setup):
+    client, registry, _ = setup
+    events(client.post("/api/chat", json={"message": "classify this image", "image": PHOTO}))
+    assert registry.prompts[-1][-1]["content"][0]["text"].startswith("Classify this image.")
+    stream = events(client.post("/api/chat", json={"message": "tell me about this helicopter", "image": PHOTO}))
+    assert [e["type"] for e in stream] == ["start", "delta", "delta", "done"]
+    assert registry.prompts[-1][-1]["content"][0]["text"] == "tell me about this helicopter"
+    assert client.post("/api/chat", json={"message": "hi", "image": "data:text/html;base64,AAAA"}).status_code == 422
+
+
+def test_detection_without_the_model_falls_back_to_the_vision_model(setup):
+    client, registry, _ = setup
+    app.dependency_overrides[get_detector] = lambda: FakeDetector(available=False)
+    stream = events(client.post("/api/chat", json={"message": "detect objects", "image": PHOTO}))
+    assert "file" not in [e["type"] for e in stream] and "Object detection is not installed" in stream[1]["text"]
+    assert client.post("/api/studio/detect", json={"image": PHOTO}).status_code == 503
+
+
+def test_studio_detect(setup):
+    client, _, _ = setup
+    detector = FakeDetector()
+    app.dependency_overrides[get_detector] = lambda: detector
+    body = client.post("/api/studio/detect", json={"image": PHOTO, "objects": "jeeps and drones"}).json()
+    assert body["image"].startswith("data:image/png;base64,") and body["summary"] == "1 jeep, 1 drone" and body["looked_for"] == ["jeep", "drone"]
+    assert client.post("/api/studio/detect", json={"image": PHOTO}).json()["looked_for"] == []  # the default list
 
 
 def test_documents_are_not_used_unless_asked(setup):

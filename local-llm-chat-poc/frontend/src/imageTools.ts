@@ -30,7 +30,17 @@ export function loadImage(url: string): Promise<HTMLImageElement> {
   });
 }
 
-const luma = (d: Uint8ClampedArray, i: number) => 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+/** A picture file as a JPEG data URL, at most `max` pixels on its longer side: small enough to send, sharp enough to read. */
+export async function fileToDataUrl(file: File, max = 1280): Promise<string> {
+  const url = URL.createObjectURL(file);
+  try {
+    return toCanvas(await loadImage(url), max).toDataURL('image/jpeg', 0.88);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+const luma =(d: Uint8ClampedArray, i: number) => 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
 
 /** Simple figures about a picture: average brightness and the dominant colour. */
 export function measure(canvas: HTMLCanvasElement): { brightness: number; colour: string } {

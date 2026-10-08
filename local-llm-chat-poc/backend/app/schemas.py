@@ -21,6 +21,7 @@ class Message(BaseModel):
     model: str | None = None  # which model wrote an assistant message
     # The rest is kept so a reopened chat shows what the live one did.
     documents: list[str] = []  # user message: the documents picked with @, by file name
+    image_file: dict | None = None  # user message: the picture sent with it ({id, filename, format, size_bytes})
     route_reason: str | None = None  # why the Auto choice picked this model
     grounded: bool = False  # answered with Corpus on
     sources: list[dict] | None = None  # the corpus documents found, when Corpus was on
@@ -64,6 +65,8 @@ class ChatRequest(BaseModel):
     inputs: dict[str, Any] = Field(default_factory=dict)
     # Let the model reason before answering (slower). Omit to use the model's default.
     thinking: bool | None = None
+    # A picture sent with the message, as a data URL: questions about it, classification or object detection
+    image: str | None = Field(default=None, pattern=r"^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$")
 
 
 class UpdateConversationRequest(BaseModel):
@@ -157,8 +160,14 @@ class ImageRequest(BaseModel):
 
 class ImageAnalysisRequest(BaseModel):
     image: str = Field(pattern=r"^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$")
-    task: Literal["describe", "summary", "text"] = "describe"
+    task: Literal["describe", "summary", "text", "classify"] = "describe"
     model: str | None = Field(default=None, max_length=64)
+
+
+class DetectRequest(BaseModel):
+    image: str = Field(pattern=r"^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$")
+    # What to look for, in plain words ("tanks and trucks"). Empty: military and everyday objects.
+    objects: str = Field(default="", max_length=300)
 
 
 class DocumentAnalysisRequest(BaseModel):

@@ -39,6 +39,8 @@ class ChatRequest(BaseModel):
     grounded: bool = False
     # Workflow input values to apply to the scenario first (see GET /api/workflows). Only used when grounded.
     inputs: dict[str, Any] = Field(default_factory=dict)
+    # Let the model reason before answering (slower). Omit to use the model's default.
+    thinking: bool | None = None
 
 
 class UpdateConversationRequest(BaseModel):
@@ -67,6 +69,14 @@ class ModelsResponse(BaseModel):
     default_model: str
     models: list[ModelInfo]
     providers: dict[str, Literal["ok", "unreachable", "not_configured"]]
+
+
+class SystemInfo(BaseModel):
+    status: Literal["ok", "degraded"]
+    providers: dict[str, str]  # provider id -> "ok" | "unreachable"
+    # Where the model servers run: "this-machine", "local-network" or "external".
+    network: Literal["this-machine", "local-network", "external"]
+    endpoints: list[str]  # host names of the configured model servers
 
 
 class WorkflowRequest(BaseModel):

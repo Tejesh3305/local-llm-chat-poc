@@ -51,7 +51,9 @@ Nothing is fetched from the internet once this is installed. Because the browser
 
 The status line under the message box should read **Gemma 4 E2B ready in memory**. The sliders icon (top right) lists each model as installed or not, in memory or not, and the share on the GPU. The page asks the backend to load a model as soon as it is selected, so the load after a switch overlaps with typing the next question.
 
-If a model reasons before answering and the first word is slow, that is a runtime setting; the backend uses the OpenAI-compatible API and sends no thinking option.
+Only one of the catalogue's models is kept in memory: before a model is loaded or asked for a reply, the backend unloads the other one. Models loaded by other tools are left alone.
+
+A model that reasons before answering is slow to its first word. Setting `"thinking": false` on a model in `models.json` makes the backend ask the runtime to skip the reasoning (`reasoning_effort: "none"`); a chat request can turn it back on with `"thinking": true`. Leave the setting out for models with no thinking switch.
 
 ## How a workflow runs, and what is the model
 
@@ -111,19 +113,20 @@ Interactive docs: http://127.0.0.1:8000/docs
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/api/models` | The models, whether each is installed and in memory, and each provider's status |
-| `POST` | `/api/models/{id}/load` | Load a model into memory ahead of use |
-| `POST` | `/api/chat` | Send a message; streams the reply. `grounded: true` answers from the corpus and reports sources |
+| `POST` | `/api/models/{id}/load` | Load a model into memory ahead of use, unloading the catalogue's other models first |
+| `POST` | `/api/chat` | Send a message; streams the reply. `grounded: true` answers from the corpus and reports sources; `thinking` overrides the model's default |
 | `GET` | `/api/workflows` | The workflows with their inputs, the situation, the languages |
 | `POST` | `/api/workflows/{id}/compute` | Calculations and references only, for given input values |
 | `POST` | `/api/workflows/{id}/run` | Streams the calculations, then the model's draft |
 | `GET` | `/api/corpus` | The sample documents |
-| `GET` | `/api/health`, `/api/conversations…` | As before |
+| `GET` | `/api/health` | Each provider's status, and whether the model servers are on this machine, the local network or elsewhere |
+| `GET` | `/api/conversations…` | As before |
 
 The speed figures under each reply are measured by the backend: **First word** is from sending the request to the runtime until its first text (so it includes a model load), and **Speed** is output tokens over the time from first text to last.
 
 ## What has been checked
 
-- `pytest` in `backend/`: 24 tests covering the calculations, the search, every workflow, the model step and Corpus chat. None needs a model.
+- `pytest` in `backend/`: 35 tests covering the calculations, the search, every workflow, the model step, Corpus chat, model loading and unloading, and the thinking option. None needs a model.
 - `npm run build` in `frontend/`: type-check and production build.
 - End to end in Chrome 154 and Edge 154 against the mock runtime, through the backend: chat, model switching, Stop, Retry, a stopped runtime, a model that is not installed, Corpus chat with sources, all seven workflows, live recalculation, a workflow with its model step off.
 

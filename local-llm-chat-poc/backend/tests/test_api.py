@@ -1,13 +1,16 @@
 """API tests. No GPU or running model needed: the model registry is replaced with a fake."""
 
+import asyncio
 import json
+from types import SimpleNamespace
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from app import workflows
 from app.config import ModelsFile
-from app.llm import LLMError, ModelRegistry
+from app.llm import LLMError, ModelRegistry, StreamResult
 from app.main import app, base_scenario, corpus, get_registry, get_store, rules
 from app.scenario import casualty_model, comms_model, force_model, mobility_model, weather_model
 from app.store import ConversationStore
@@ -16,10 +19,29 @@ MODELS = {
     "default_model": "general",
     "providers": {"local": {"base_url_env": "TEST_LLM_BASE_URL"}},
     "models": [
-        {"id": "general", "label": "General", "provider": "local", "provider_model": "gemma4:e4b"},
+        {"id": "general", "label": "General", "provider": "local", "provider_model": "gemma4:e4b", "thinking": False},
         {"id": "coder", "label": "Coder", "provider": "local", "provider_model": "nemotron-3-nano:4b"},
     ],
 }
+
+
+class FakeOllama:
+    """Stands in for Ollama's own API: tracks which models are 'in memory'."""
+
+    def __init__(self, loaded: set[str], down: bool = False):
+        self.loaded = set(loaded)
+        self.down = down
+
+    async def get(self, url, **_):
+        if self.down:
+            raise httpx.ConnectError("refused")
+        return httpx.Response(200, json={"models": [{"name": name, "size": 100, "size_vram": 100} for name in self.loaded]})
+
+    async def post(self, url, json, **_):
+        if self.down:
+            raise httpx.ConnectError("refused")
+        (self.loaded.discard if json.get("keep_alive") == 0 else self.loaded.add)(json["model"])
+        return httpx.Response(200, json={"done": True})
 
 
 class FakeRegistry(ModelRegistry):
@@ -34,9 +56,15 @@ class FakeRegistry(ModelRegistry):
     async def installed_models(self):
         return {"local": {"gemma4:e4b"}}  # "coder" is not installed
 
-    async def stream_chat(self, model, messages, result, *, system=None, temperature=None, max_tokens=None):
+    def use_ollama(self, loaded: set[str], down: bool = False) -> FakeOllama:
+        """Treat the provider as one of type "ollama", with these models in memory."""
+        self.native["local"] = "http://fake"
+        self._http = FakeOllama(loaded, down)
+        return self._http
+
+    async def stream_chat(self, model, messages, result, *, system=None, temperature=None, max_tokens=None, thinking=None):
         self.prompts.append(messages)
-        self.calls.append({"system": system, "temperature": temperature, "max_tokens": max_tokens})
+        self.calls.append({"system": system, "temperature": temperature, "max_tokens": max_tokens, "thinking": thinking})
         if self.fail_with:
             raise LLMError(self.fail_with)
         for word in [f"[{model.provider_model}] ", "reply"]:
@@ -94,6 +122,108 @@ def test_model_switch_per_request_and_per_conversation(setup):
     assert client.patch(f"/api/conversations/{conversation_id}", json={"model": "general"}).status_code == 200
     follow_up = events(client.post("/api/chat", json={"message": "hi", "conversation_id": conversation_id}))
     assert follow_up[0]["model"] == "general"
+
+
+def test_models_report_what_is_in_memory(setup):
+    client, registry, _ = setup
+    registry.use_ollama({"gemma4:e4b"})
+    models = client.get("/api/models").json()["models"]
+    assert [(m["loaded"], m["gpu_percent"]) for m in models] == [(True, 100), (False, None)]
+
+
+def test_loading_a_model_unloads_the_other_one(setup):
+    client, registry, _ = setup
+    # "other-tool:1b" is not in this app's catalogue, so it must be left alone.
+    ollama = registry.use_ollama({"gemma4:e4b", "other-tool:1b"})
+
+    assert client.post("/api/models/coder/load").json() == {"loaded": True}
+    assert ollama.loaded == {"nemotron-3-nano:4b", "other-tool:1b"}
+    assert client.post("/api/models/gpt-9/load").status_code == 400
+
+
+def test_chat_and_workflows_unload_the_previous_model_first(setup):
+    client, registry, _ = setup
+    ollama = registry.use_ollama({"gemma4:e4b"})
+    stream = events(client.post("/api/chat", json={"message": "hi", "model": "coder"}))
+    assert stream[-1]["type"] == "done" and ollama.loaded == set()
+
+    ollama.loaded = {"nemotron-3-nano:4b"}
+    stream = events(client.post("/api/workflows/weather/run", json={"model": "general"}))
+    assert stream[-1]["type"] == "done" and ollama.loaded == set()
+
+
+def test_runtime_down_while_switching_models(setup):
+    client, registry, _ = setup
+    registry.use_ollama(set(), down=True)
+
+    response = client.post("/api/models/coder/load")
+    assert response.status_code == 502 and response.json()["detail"] == "Local engine not running. Start the model server."
+    assert events(client.post("/api/chat", json={"message": "hi"}))[-1]["type"] == "done"  # the fake reply still streams
+    assert not registry.slot.locked()  # a failed request must not block the next one
+
+
+def test_thinking_can_be_chosen_per_message(setup):
+    client, registry, _ = setup
+    client.post("/api/chat", json={"message": "hi"})
+    client.post("/api/chat", json={"message": "hi", "thinking": True})
+    assert [call["thinking"] for call in registry.calls] == [None, True]  # None = use the model's default
+
+
+class EmptyStream:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        return None
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        raise StopAsyncIteration
+
+
+class RecordingCompletions:
+    """Captures the options sent to the runtime; streams nothing back."""
+
+    def __init__(self):
+        self.calls: list[dict] = []
+
+    async def create(self, **options):
+        self.calls.append(options)
+        return EmptyStream()
+
+
+@pytest.mark.parametrize(
+    ("model_id", "requested", "turns_thinking_off"),
+    [
+        ("general", None, True),  # model default: thinking off
+        ("general", False, True),
+        ("general", True, False),  # asked to think: leave the runtime's default (thinking on)
+        ("coder", None, False),  # no thinking switch: never send the option
+        ("coder", False, False),
+    ],
+)
+def test_thinking_option_sent_to_the_runtime(monkeypatch, model_id, requested, turns_thinking_off):
+    monkeypatch.setenv("TEST_LLM_BASE_URL", "http://fake/v1")
+    registry = ModelRegistry(ModelsFile.model_validate(MODELS))
+    completions = RecordingCompletions()
+    registry.clients["local"] = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+    async def run():
+        messages = [{"role": "user", "content": "hi"}]
+        async for _ in registry.stream_chat(registry.get(model_id), messages, StreamResult(), thinking=requested):
+            pass
+
+    asyncio.run(run())
+    assert (completions.calls[0].get("reasoning_effort") == "none") == turns_thinking_off
+
+
+def test_health_reports_where_the_model_servers_run(setup):
+    client, _, _ = setup
+    body = client.get("/api/health").json()
+    assert body["status"] == "ok" and body["providers"] == {"local": "ok"}
+    assert body["network"] == "external" and body["endpoints"] == ["fake"]
 
 
 def test_validation_errors(setup):

@@ -4,10 +4,13 @@ Every local runtime used here (Ollama, llama.cpp, LM Studio, vLLM) speaks the
 OpenAI Chat Completions API, so one client type covers all of them. Switching
 models or runtimes is a change to models.json / .env only.
 
-Providers of type "ollama" get two extras through Ollama's own API: asking
-which model is in memory, and loading a model ahead of the first message.
+Providers of type "ollama" get three extras through Ollama's own API: asking
+which model is in memory, loading a model ahead of the first message, and
+unloading the catalogue's other models so only one is in memory at a time.
 """
 
+import asyncio
+import ipaddress
 import logging
 import os
 import re
@@ -64,6 +67,10 @@ class ModelRegistry:
         self.clients: dict[str, AsyncOpenAI] = {}
         self.native: dict[str, str] = {}  # provider id -> root of Ollama's own API
         self.on_this_machine: set[str] = set()  # providers whose address is this computer
+        self.base_urls: dict[str, str] = {}  # configured providers -> where their server runs
+        # Hold this while loading or generating: with one model in memory at a time,
+        # a request for another model has to wait for the current one to finish.
+        self.slot = asyncio.Lock()
         for provider_id, provider in models_file.providers.items():
             base_url = os.getenv(provider.base_url_env, "").strip()
             if not base_url:
@@ -72,6 +79,7 @@ class ModelRegistry:
             if urlparse(base_url).hostname in ("127.0.0.1", "localhost", "::1"):
                 self.on_this_machine.add(provider_id)
             api_key = os.getenv(provider.api_key_env, "") if provider.api_key_env else ""
+            self.base_urls[provider_id] = base_url
             self.clients[provider_id] = AsyncOpenAI(
                 base_url=base_url,
                 api_key=api_key or "not-needed",  # local runtimes ignore the key; the SDK requires a value
@@ -104,6 +112,22 @@ class ModelRegistry:
     def _missing(self, model: ModelConfig) -> str:
         hint = f" Run: ollama pull {model.provider_model}" if model.provider in self.native else ""
         return f"{model.label} is not installed on this machine.{hint}"
+
+    def network(self) -> tuple[str, list[str]]:
+        """Where the model servers run: ("this-machine" | "local-network" | "external", host names).
+
+        This reads the configured addresses; it does not watch network traffic.
+        """
+        hosts = sorted({urlparse(url).hostname or url for url in self.base_urls.values()})
+        scopes = set()
+        for host in hosts:
+            try:
+                address = ipaddress.ip_address(host)
+                scopes.add("this-machine" if address.is_loopback else "local-network" if address.is_private else "external")
+            except ValueError:  # a name, not an IP address
+                scopes.add("this-machine" if host == "localhost" else "external")
+        scope = "external" if "external" in scopes else "local-network" if "local-network" in scopes else "this-machine"
+        return scope, hosts
 
     async def installed_models(self) -> dict[str, set[str] | None]:
         """Per provider: the model names the runtime reports, or None if unreachable/not configured."""
@@ -152,6 +176,24 @@ class ModelRegistry:
             raise LLMError(f"{model.label} could not be loaded into memory.")
         return True
 
+    async def activate(self, model: ModelConfig) -> None:
+        """Make `model` the only catalogue model in memory. Call while holding `slot`.
+
+        Unloads the other models of this catalogue; models loaded by other tools are left alone.
+        A runtime that cannot be asked is skipped: the request that follows reports it.
+        """
+        for provider_id, in_memory in (await self.loaded_models()).items():
+            for other in self.config.models:
+                is_target = other.provider == model.provider and other.provider_model == model.provider_model
+                if other.provider != provider_id or is_target or _tag(other.provider_model) not in (in_memory or {}):
+                    continue
+                logger.info("unloading '%s' to make room for '%s'", other.provider_model, model.provider_model)
+                try:  # a generate call with keep_alive 0 and no prompt only unloads the model
+                    payload = {"model": other.provider_model, "keep_alive": 0, "stream": False}
+                    await self._http.post(f"{self.native[provider_id]}/api/generate", json=payload, timeout=30)
+                except httpx.HTTPError as error:
+                    logger.warning("could not unload '%s': %s", other.provider_model, error)
+
     async def stream_chat(
         self,
         model: ModelConfig,
@@ -161,10 +203,12 @@ class ModelRegistry:
         system: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        thinking: bool | None = None,
     ) -> AsyncIterator[str]:
         """Yields text chunks. Raises LLMError with a user-friendly message on failure.
 
         `system`, `temperature` and `max_tokens` replace the model's own settings from models.json when given.
+        `thinking` overrides the model's default; it is ignored for models without a thinking switch.
         """
         client = self.clients[model.provider]
         system_prompt = model.system_prompt if system is None else system
@@ -177,6 +221,10 @@ class ModelRegistry:
             options["temperature"] = temperature
         if max_tokens is not None:
             options["max_tokens"] = max_tokens
+        if model.thinking is not None and not (model.thinking if thinking is None else thinking):
+            # Thinking models reason by default; the reasoning is never shown, so skipping it
+            # removes the long silent wait before the first word.
+            options["reasoning_effort"] = "none"
 
         started = time.perf_counter()
         first: float | None = None

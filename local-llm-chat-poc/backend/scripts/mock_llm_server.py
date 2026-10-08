@@ -102,9 +102,14 @@ def running():
 
 @app.post("/api/generate")
 async def generate(request: Request):
-    model = (await request.json()).get("model")
+    global in_memory
+    body = await request.json()
+    model = body.get("model")
     if model not in MODELS:
         return JSONResponse({"error": f"model '{model}' not found"}, status_code=404)
+    if body.get("keep_alive") == 0:  # how Ollama is asked to unload a model
+        in_memory = None if in_memory == model else in_memory
+        return {"model": model, "response": "", "done": True, "done_reason": "unload"}
     await load(model)
     return {"model": model, "response": "", "done": True, "done_reason": "load"}
 

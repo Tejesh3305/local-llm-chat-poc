@@ -43,7 +43,9 @@ class ProviderConfig(BaseModel):
     base_url_env: str = Field(pattern=r"^[A-Z][A-Z0-9_]*$")
     api_key_env: str | None = Field(default=None, pattern=r"^[A-Z][A-Z0-9_]*$")
     name: str = "the model server"  # shown in messages: "Local engine not running. Start Ollama."
-    # "ollama" also allows asking the runtime which model is in memory and loading one ahead of use.
+    # "ollama" also allows asking the runtime which model is in memory, loading one ahead of use
+    # and unloading the others, so only one is in memory at a time.
+    # "openai" is any other OpenAI-compatible server, which manages its own memory.
     type: Literal["openai", "ollama"] = "openai"
 
 
@@ -59,6 +61,10 @@ class ModelConfig(BaseModel):
     system_prompt: str | None = None
     temperature: float | None = Field(default=None, ge=0, le=2)
     max_tokens: int | None = Field(default=None, gt=0)
+    # For models that reason silently before answering: whether they do so by default.
+    # Off is much faster for everyday questions; the UI can turn it on per message.
+    # Leave unset for models/runtimes without a thinking switch.
+    thinking: bool | None = None
 
 
 class ModelsFile(BaseModel):

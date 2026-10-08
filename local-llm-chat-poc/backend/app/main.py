@@ -24,6 +24,7 @@ from .schemas import (
     Message,
     ModelInfo,
     ModelsResponse,
+    SystemInfo,
     UpdateConversationRequest,
     WorkflowRequest,
 )
@@ -102,12 +103,14 @@ def stats(result: StreamResult) -> dict:
 # ---------- health & models ----------
 
 
-@app.get("/api/health")
+@app.get("/api/health", response_model=SystemInfo)
 async def health(registry: ModelRegistry = Depends(get_registry)):
     installed = await registry.installed_models()
     providers = {pid: ("ok" if models is not None else "unreachable") for pid, models in installed.items() if pid in registry.clients}
     healthy = any(v == "ok" for v in providers.values())
-    return JSONResponse({"status": "ok" if healthy else "degraded", "providers": providers}, status_code=200 if healthy else 503)
+    network, endpoints = registry.network()
+    info = SystemInfo(status="ok" if healthy else "degraded", providers=providers, network=network, endpoints=endpoints)
+    return JSONResponse(info.model_dump(), status_code=200 if healthy else 503)
 
 
 @app.get("/api/models", response_model=ModelsResponse)
@@ -147,10 +150,15 @@ async def list_models(registry: ModelRegistry = Depends(get_registry)):
 
 @app.post("/api/models/{model_id}/load")
 async def load_model(model_id: str, registry: ModelRegistry = Depends(get_registry)):
-    """Loads a model into memory ahead of the first message, where the runtime supports it."""
+    """Loads a model into memory ahead of the first message, where the runtime supports it.
+
+    The catalogue's other models are unloaded first, so only one is in memory at a time.
+    """
     model = resolve_model(registry, model_id)
     try:
-        return {"loaded": await registry.load(model)}
+        async with registry.slot:  # waits for a generation that is still running
+            await registry.activate(model)
+            return {"loaded": await registry.load(model)}
     except LLMError as error:
         raise HTTPException(502, error.user_message)
 
@@ -163,6 +171,7 @@ class ChatContext:
     conversation: Conversation
     model: ModelConfig
     message: str
+    thinking: bool | None = None  # None: use the model's default
     system: str | None = None  # replaces the model's own system prompt when Corpus is on
     sources: list[dict] | None = None  # the documents found, when Corpus is on
 
@@ -185,7 +194,7 @@ def prepare_chat(
 
     if conversation is None:
         conversation = store.new(model.id, body.conversation_id)
-    context = ChatContext(conversation=conversation, model=model, message=body.message)
+    context = ChatContext(conversation=conversation, model=model, message=body.message, thinking=body.thinking)
 
     if body.grounded:
         scenario = scenario_for(body.inputs)
@@ -218,9 +227,11 @@ async def chat(
     parts: list[str] = []
     result = StreamResult()
     try:
-        async for text in registry.stream_chat(ctx.model, history, result, system=ctx.system):
-            parts.append(text)
-            yield {"type": "delta", "text": text}
+        async with registry.slot:  # one model in memory, so one generation at a time
+            await registry.activate(ctx.model)
+            async for text in registry.stream_chat(ctx.model, history, result, system=ctx.system, thinking=ctx.thinking):
+                parts.append(text)
+                yield {"type": "delta", "text": text}
     except LLMError as error:
         logger.warning("chat failed (model=%s): %s", ctx.model.id, error.__cause__ or error)
         yield {"type": "error", "message": error.user_message}
@@ -304,11 +315,13 @@ async def run_workflow(ctx: RunContext = Depends(prepare_run), registry: ModelRe
     system, user = workflows.draft_messages(prompts, ctx.workflow, ctx.computed, ctx.model.label, ctx.language)
     result = StreamResult()
     try:
-        async for text in registry.stream_chat(
-            ctx.model, [{"role": "user", "content": user}], result,
-            system=system, temperature=prompts.temperature, max_tokens=prompts.max_tokens,
-        ):
-            yield {"type": "delta", "text": text}
+        async with registry.slot:  # one model in memory, so one generation at a time
+            await registry.activate(ctx.model)
+            async for text in registry.stream_chat(
+                ctx.model, [{"role": "user", "content": user}], result,
+                system=system, temperature=prompts.temperature, max_tokens=prompts.max_tokens,
+            ):
+                yield {"type": "delta", "text": text}
     except LLMError as error:
         logger.warning("workflow draft failed (workflow=%s, model=%s): %s", ctx.workflow.id, ctx.model.id, error.__cause__ or error)
         yield {"type": "error", "message": error.user_message}

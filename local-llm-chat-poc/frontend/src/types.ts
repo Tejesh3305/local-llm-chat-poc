@@ -85,7 +85,7 @@ export type ExportFormat = 'pdf' | 'docx' | 'pptx';
 export interface GeneratedFile {
   id: string;
   filename: string;
-  format: ExportFormat;
+  format: ExportFormat | 'png' | 'svg'; // png/svg: a picture drawn in the chat
   size_bytes: number;
 }
 
@@ -96,13 +96,16 @@ export interface OutlineResponse {
   filename: string;
 }
 
-export interface DemoImage {
-  svg: string;
-  style: string;
-  palette: string;
-  seed: number;
-  width: number;
-  height: number;
+/** A picture from AI Studio: drawn by the image model, or by the demo renderer when it is not installed. */
+export type StudioImage =
+  | { kind: 'demo'; svg: string; style: string; palette: string; seed: number; width: number; height: number }
+  | { kind: 'model'; image: string; model: string; style: string; prompt_used: string; steps: number; seed: number; seconds: number; width: number; height: number };
+
+export interface ImageEngine {
+  available: boolean;
+  model: string;
+  device?: string;
+  reason: string;
 }
 
 export interface DocumentInsights {
@@ -164,7 +167,7 @@ export interface Stats {
 
 // Server-Sent Events sent by POST /api/chat
 export type ChatEvent =
-  | { type: 'start'; conversation_id: string; model: string; sources?: DocRef[]; route_reason?: string; action?: { type: 'file'; format: ExportFormat; label: string } }
+  | { type: 'start'; conversation_id: string; model: string; sources?: DocRef[]; route_reason?: string; action?: { type: 'file' | 'image'; format?: ExportFormat; label: string } }
   | { type: 'excerpts'; excerpts: Excerpt[] }
   | { type: 'file'; file: GeneratedFile }
   | { type: 'delta'; text: string }

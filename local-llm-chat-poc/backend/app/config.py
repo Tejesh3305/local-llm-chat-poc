@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     frontend_dist: str = "../frontend/dist"  # served at / when it exists (after `npm run build`)
     # Folder for the SQLite file that holds the saved chats and the uploaded documents.
     storage_dir: str = "storage"
+    # Optional image model for AI Studio (scripts/get_image_model.py puts it here)
+    image_model_dir: str = "models/sd-turbo"
 
     cors_origins: str = "http://localhost:5173"  # comma-separated
 

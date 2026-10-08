@@ -14,7 +14,7 @@ from app.documents import DocumentLibrary, split_text
 from app.llm import LLMError, ModelRegistry, StreamResult
 from app.actions import file_request
 from app.files import GeneratedFiles
-from app.main import app, base_scenario, corpus, get_files, get_library, get_registry, get_store, rules
+from app.main import app, base_scenario, corpus, get_files, get_images, get_library, get_registry, get_store, rules
 from app.router import choose_model
 from app.scenario import casualty_model, comms_model, force_model, mobility_model, weather_model
 from app.schemas import Message
@@ -89,6 +89,21 @@ class FakeRegistry(ModelRegistry):
         return [[1.0 if topic in text.lower() else 0.01 for topic in topics] for text in texts]
 
 
+class FakeImages:
+    """Stands in for the SD-Turbo generator: no GPU or model files needed."""
+
+    def __init__(self, available: bool = False):
+        self.available = available
+        self.calls: list[tuple] = []
+
+    def status(self):
+        return {"available": self.available, "model": "SD-Turbo", "device": "GPU", "reason": "" if self.available else "The image model is not downloaded."}
+
+    def generate(self, prompt, style, seed, steps=2):
+        self.calls.append((prompt, style, seed, steps))
+        return b"\x89PNG fake", {"prompt_used": f"{prompt}, {style}", "steps": steps, "seed": seed, "seconds": 0.1, "width": 512, "height": 512}
+
+
 @pytest.fixture
 def setup(monkeypatch, tmp_path):
     monkeypatch.setenv("TEST_LLM_BASE_URL", "http://fake/v1")
@@ -97,6 +112,7 @@ def setup(monkeypatch, tmp_path):
     app.dependency_overrides[get_store] = lambda: store
     app.dependency_overrides[get_library] = lambda: library
     app.dependency_overrides[get_files] = lambda: made
+    app.dependency_overrides[get_images] = lambda: FakeImages()
     yield TestClient(app), registry, store
     app.dependency_overrides.clear()
 
@@ -408,25 +424,88 @@ def test_chat_converts_a_picked_document_to_word(setup):
         assert "Served in the northern sector" in archive.read("word/document.xml").decode()
     assert store.get(stream[0]["conversation_id"]).messages[1].files == [made]  # a reopened chat keeps the link
 
-    # A follow-up that only says "the given doc" uses the document picked earlier in the chat
-    again = events(client.post("/api/chat", json={"message": "convert the given doc to pdf", "conversation_id": stream[0]["conversation_id"]}))
+    # A follow-up without @ reads no document, even one picked earlier: it asks which one
+    asked = events(client.post("/api/chat", json={"message": "convert the given doc to pdf", "conversation_id": stream[0]["conversation_id"]}))
+    assert [e["type"] for e in asked] == ["start", "delta", "done"] and "Type **@**" in asked[1]["text"] and "@Liam_Dao.txt" in asked[1]["text"]
+    # "try again" repeats the last file request together with the documents picked for it
+    stream = events(client.post("/api/chat", json={"message": "convert Liam_Dao.txt to pdf", "document_ids": [document_id]}))
+    again = events(client.post("/api/chat", json={"message": "try again", "conversation_id": stream[0]["conversation_id"]}))
     assert again[3]["file"]["filename"] == "Liam-Dao.pdf"
     assert client.get(f"/api/files/{again[3]['file']['id']}").content.startswith(b"%PDF")
     assert client.get(f"/api/files/{'0' * 32}").status_code == 404
+    assert registry.calls == []
 
 
 def test_chat_writes_a_deck_with_the_model(setup):
     client, registry, _ = setup
-    upload(client, "orders.txt", "Convoy departs at 0530 h from the transit camp.")
-    stream = events(client.post("/api/chat", json={"message": "make a powerpoint of this document"}))   # the only uploaded document
+    document_id = upload(client, "orders.txt", "Convoy departs at 0530 h from the transit camp.").json()["id"]
+    stream = events(client.post("/api/chat", json={"message": "make a powerpoint of this document", "document_ids": [document_id]}))
     assert [e["type"] for e in stream] == ["start", "excerpts", "delta", "delta", "file", "done"]
     sent = registry.prompts[-1][0]["content"]
     assert "briefing presentation" in sent and "Convoy departs at 0530 h" in sent and registry.calls[-1]["system"].startswith("You are SAINIK AI")
     assert stream[4]["file"]["format"] == "pptx"
 
+    # Not picked with @: the uploaded document is not read, even when it is the only one and the message says "it"
+    cats = events(client.post("/api/chat", json={"message": "tell me about cat's breed and generate one ppt for it"}))
+    assert [e["type"] for e in cats] == ["start", "delta", "delta", "file", "done"] and cats[3]["file"]["format"] == "pptx"
+    assert "Convoy departs" not in registry.prompts[-1][0]["content"] and "cat's breed" in registry.prompts[-1][0]["content"]
+
     plain = events(client.post("/api/chat", json={"message": "create a pdf report on winter readiness"}))
     assert [e["type"] for e in plain] == ["start", "delta", "delta", "file", "done"]  # no document involved
     assert registry.prompts[-1][0]["content"].endswith("for this request: create a pdf report on winter readiness")
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("create the image of cat", ("cat", "photo")),
+        ("genearte image of dog", ("dog", "photo")),  # misspelt
+        ("generte an imge of a jeep", ("jeep", "photo")),
+        ("crate a pic of a tank", ("tank", "photo")),
+        ("picture of a cat", ("cat", "photo")),  # no action word, but clearly a request
+        ("draw a picture of a snowy mountain ridge", ("snowy mountain ridge", "landscape")),
+        ("make a poster for the winter drill", ("winter drill", "poster")),
+        ("generate an image showing a terrain map of the valley", ("terrain map of the valley", "terrain map")),
+        ("describe this image", None),
+        ("what is in the picture I sent?", None),
+        ("can you make the image brighter?", None),
+        ("the report has an image on page 2", None),
+        ("create a word doc of given doc", None),
+        ("generate a report", None),
+        ("tell me about cats", None),
+    ],
+)
+def test_picture_requests_are_recognised(message, expected):
+    from app.actions import picture_request
+
+    request = picture_request(message)
+    assert (request and (request.subject, request.style)) == expected
+
+
+def test_chat_draws_a_picture(setup):
+    client, registry, store = setup
+    # Without an image model: a demo drawing, clearly labelled
+    demo = events(client.post("/api/chat", json={"message": "create the image of cat"}))
+    assert [e["type"] for e in demo] == ["start", "delta", "file", "done"]
+    assert demo[0]["action"]["type"] == "image" and "demo drawing" in demo[1]["text"] and demo[2]["file"]["format"] == "svg"
+    assert registry.calls == []  # the chat model is not asked
+
+    model = FakeImages(available=True)
+    app.dependency_overrides[get_images] = lambda: model
+    ollama = registry.use_ollama({"gemma4:e4b"})
+    real = events(client.post("/api/chat", json={"message": "create the image of cat", "conversation_id": demo[0]["conversation_id"]}))
+    assert real[0]["action"]["label"] == "Drawing with SD-Turbo" and "Powered by Stability AI" in real[1]["text"]
+    picture = real[2]["file"]
+    assert picture["format"] == "png" and picture["filename"] == "cat.png" and model.calls[0][:2] == ("cat", "photo")
+    assert ollama.loaded == set()  # the chat model made room on the GPU
+    response = client.get(f"/api/files/{picture['id']}")
+    assert response.headers["content-type"] == "image/png" and response.content == b"\x89PNG fake"
+    assert store.get(demo[0]["conversation_id"]).messages[-1].files == [picture]
+
+    # "try again" repeats the picture request; on its own, it is ordinary chat
+    again = events(client.post("/api/chat", json={"message": "try again", "conversation_id": demo[0]["conversation_id"]}))
+    assert again[2]["file"]["format"] == "png" and model.calls[-1][:2] == ("cat", "photo")
+    assert events(client.post("/api/chat", json={"message": "try again"}))[1]["type"] == "delta" and registry.calls
 
 
 def test_documents_are_not_used_unless_asked(setup):
@@ -533,6 +612,23 @@ def test_demo_image_follows_the_prompt(setup):
     assert (first["palette"], other["palette"]) == ("snow", "desert")
     assert first["svg"].startswith("<svg") and "NOT A GENERATIVE MODEL" in first["svg"]
     assert client.post("/api/studio/image", json={"prompt": "<script>", "style": "poster"}).json()["svg"].count("<script>") == 0
+
+
+def test_image_model_is_used_when_installed(setup):
+    client, registry, _ = setup
+    assert client.get("/api/studio/image-engine").json()["available"] is False
+    assert client.post("/api/studio/image", json={"prompt": "Snow ridge"}).json()["kind"] == "demo"  # falls back
+    assert client.post("/api/studio/image", json={"prompt": "Snow ridge", "engine": "model"}).status_code == 503
+
+    model = FakeImages(available=True)
+    app.dependency_overrides[get_images] = lambda: model
+    ollama = registry.use_ollama({"gemma4:e4b"})
+    body = client.post("/api/studio/image", json={"prompt": "Snow ridge", "style": "poster", "seed": 7, "steps": 1}).json()
+    assert body["kind"] == "model" and body["image"].startswith("data:image/png;base64,") and body["seed"] == 7
+    assert model.calls == [("Snow ridge", "poster", 7, 1)]
+    assert ollama.loaded == set()  # the chat model was unloaded to free the GPU
+    assert client.post("/api/studio/image", json={"prompt": "Snow ridge", "engine": "demo"}).json()["kind"] == "demo"
+    assert client.post("/api/studio/image", json={"prompt": "x y", "steps": 9}).status_code == 422
 
 
 def test_draft_streams_from_the_model(setup):

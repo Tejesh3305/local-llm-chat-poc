@@ -18,15 +18,16 @@ The page has three views, switched at the top left:
 | Feature | Where | What it does |
 |---|---|---|
 | Chat history | Left rail, **Chats** | Every chat is saved after its first reply and survives a restart. Click one to reopen and continue it; rename or delete it from the row. |
-| Your documents | **Attach**, then **Documents** | Attach a PDF, DOCX, TXT or MD file. With **Documents** on, the parts of your files closest to the question are given to the model, and the reply lists the parts it used. Files are listed, and removed, in the left rail. |
-| Pick documents | Type **@** in the message box | Lists your uploaded documents; keep typing to filter, ↑/↓ and Enter (or a click) to pick. The picked documents appear as chips, and only they are searched for that one question. Backspace in an empty box removes the last chip; Esc closes the list. The question in the chat shows which documents were picked. |
-| Files from the chat | Ask, e.g. *"make a Word doc of @Liam_Dao.pdf"*, *"convert the given doc to PDF"*, *"make a PowerPoint of this document"*, *"make a PDF of your last answer"* | The reply carries a download card. Converting copies the document's text into the file with no model involved; a summary, notes or a deck is written by the model from the whole document first. Without @, "the given doc" means the document picked earlier in the chat, or the only uploaded one. Files are kept in `backend/storage/files/`. A short picked document (up to 12,000 characters) is given to the model whole, so "summarise this" works. |
+| Your documents | **Attach** | Attach a PDF, DOCX, TXT or MD file. It is listed, and can be removed, in the left rail. **The chat reads a document only when you pick it with @** for a message: never because it is uploaded, and never guessed from words like "it" or "the given doc". |
+| Pick documents | Type **@** in the message box | Lists your uploaded documents; keep typing to filter, ↑/↓ and Enter (or a click) to pick. The picked documents appear as chips and are used for that one question: a short document is read whole, a long one through the parts closest to the question. The reply lists what it used. Backspace in an empty box removes the last chip; Esc closes the list. Asking about "the given doc" without picking one gets a reply that says to pick it with @. |
+| Files from the chat | Ask, e.g. *"@Liam_Dao.pdf make a Word doc of it"*, *"@report.pdf convert to PDF"*, *"@orders.txt make a PowerPoint of this"*, *"make a PowerPoint on cat breeds"*, *"make a PDF of your last answer"* | The reply carries a download card. Converting a picked document copies its text into the file with no model involved; a summary, notes or a deck is written by the model, from the picked document or, with none picked, from its own knowledge. "Try again" repeats the last request with the same picked documents. Files are kept in `backend/storage/files/`. A short picked document (up to 12,000 characters) is given to the model whole, so "summarise this" works. |
+| Pictures from the chat | Ask, e.g. *"create the image of a cat"*, *"draw a picture of a snowy ridge at night"*, *"make a poster for the winter drill"* | SD-Turbo draws it and the picture appears in the reply, with a Download button. Without the image model installed, a labelled demo drawing is shown instead. "Describe this image" and other questions about pictures go to the chat model as usual. |
 | Think | **Think** | Lets the model reason before answering: slower, better for multi-step problems. Shown for models with `"thinking"` set in `models.json`. |
 | Auto | Model menu, **Auto** | The backend picks the model for each message: programming questions go to the model tagged `code`, everything else to the default model. The reply says which rule applied. Only installed models are picked. |
 
 Chats and uploaded documents are stored in `backend/storage/chat.db` (SQLite). Delete that file to start clean. Document search needs the embedding model named under `"embedding"` in `models.json`: `ollama pull nomic-embed-text`.
 
-**Corpus** and **Documents** are different sources: Corpus is the scenario's sample documents (keyword search, fixed), Documents are the files you attach (embedding search).
+**Corpus** and your documents are different sources: Corpus is the scenario's sample documents (keyword search, fixed, switched on with the Corpus button); your documents are the files you attach, used only when picked with @.
 
 ## AI Studio
 
@@ -37,11 +38,24 @@ A fourth view, **AI Studio**, has six separate tools in its left rail. Each says
 | PDF report | Optional: drafts the report from a short description | The PDF itself (fpdf2): header band, unit marking, page numbers, preview in the page |
 | Word document | Optional: drafts a letter, order or memo | The `.docx` (python-docx) with real Title/Heading/List styles, so it can be edited |
 | PowerPoint deck | Optional: drafts a briefing | The `.pptx` (python-pptx): title slide, one slide per section, closing slide; slide preview in the page |
-| Image generation | **Mock.** No image model | Draws a terrain map, landscape or poster from the prompt's words (snow, night, desert, forest…). Same prompt, same picture. Marked *Demo render, not a generative model* |
+| Image generation | **SD-Turbo** (Stability AI, about 1B parameters) draws a 512 × 512 picture on the GPU in about a second, when installed (below) | Without it: a demo renderer draws a terrain map, landscape or poster from the prompt's words, marked *Demo render, not a generative model* |
 | Image processing | Describe, report summary, read text: sent to the model tagged `vision` (Gemma 4 E4B) | Auto-enhance, sharpen, grayscale, night vision, thermal, edge detect, in the browser |
 | Document processing | Executive summary, key points, people/places/dates, actions and risks, summary in Hindi, from an uploaded document | Word count, reading time, frequent terms and dates, counted from the text |
 
 The text for the three file tools is Markdown-style: `#` title, `##` section (one slide each in PowerPoint), `-` bullet, `**bold**`. Every model result can be saved as PDF, Word or PowerPoint. A long document is cut to its first 12,000 characters for the model, and the page says so. Nothing generated is stored on the server.
+
+### Real image generation (optional)
+
+SD-Turbo is small enough for a 6 GB laptop GPU. Install it once, while online (about 5 GB in all):
+
+```powershell
+cd backend
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements-images.txt     # PyTorch with CUDA, diffusers
+python scripts/get_image_model.py          # the model, into backend/models/sd-turbo
+```
+
+Restart the backend. AI Studio's badge then reads *SD-Turbo · on this machine's GPU*, and a switch offers the demo renderer as well. The GPU is shared: before drawing, the backend unloads the chat model, and moves the image model back to system memory afterwards, so the next chat message reloads its model (a few seconds). The first picture after a restart also loads SD-Turbo from disk. Check SD-Turbo's licence (`backend/models/sd-turbo/LICENSE*`) before any use beyond a demo.
 
 ## Running it
 

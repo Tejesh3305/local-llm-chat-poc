@@ -1,5 +1,5 @@
 import type {
-  ConversationSummary, DemoImage, Doc, DocumentInfo, DocumentInsights, ExportFormat, InputValue, ModelsResponse, OutlineResponse,
+  ConversationSummary, Doc, DocumentInfo, DocumentInsights, ExportFormat, ImageEngine, InputValue, ModelsResponse, OutlineResponse, StudioImage,
   RepositoryModel, Situation, StoredConversation, WorkflowResult, WorkflowsResponse,
 } from './types';
 
@@ -92,7 +92,10 @@ export const exportFile = async (format: ExportFormat, title: string, content: s
 export const fetchOutline = async (format: ExportFormat, title: string, content: string): Promise<OutlineResponse> =>
   (await request('/api/studio/outline', post({ format, title, content }))).json();
 
-export const makeImage = async (prompt: string, style: string): Promise<DemoImage> => (await request('/api/studio/image', post({ prompt, style }))).json();
+export const makeImage = async (prompt: string, style: string, engine: 'model' | 'demo', steps: number): Promise<StudioImage> =>
+  (await request('/api/studio/image', post({ prompt, style, engine, steps }))).json();
+
+export const fetchImageEngine = async (): Promise<ImageEngine> => (await request('/api/studio/image-engine')).json();
 
 export const fetchInsights = async (id: string): Promise<DocumentInsights> => (await request(`/api/documents/${id}/insights`)).json();
 

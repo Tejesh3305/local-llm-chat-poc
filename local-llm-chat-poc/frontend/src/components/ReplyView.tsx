@@ -1,11 +1,12 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from 'react';
 import { fileUrl } from '../api';
 import { mdBlocks, patchBlocks } from '../markdown';
-import type { DocRef, ExportFormat, Reply } from '../types';
+import type { DocRef, GeneratedFile, Reply } from '../types';
 import { Icon } from './icons';
 
-const FORMAT_NAMES: Record<ExportFormat, string> = { pdf: 'PDF', docx: 'Word document', pptx: 'PowerPoint deck' };
-const FORMAT_BADGES: Record<ExportFormat, string> = { pdf: 'PDF', docx: 'DOC', pptx: 'PPT' };
+const FORMAT_NAMES: Record<GeneratedFile['format'], string> = { pdf: 'PDF', docx: 'Word document', pptx: 'PowerPoint deck', png: 'Picture', svg: 'Demo drawing' };
+const FORMAT_BADGES: Record<GeneratedFile['format'], string> = { pdf: 'PDF', docx: 'DOC', pptx: 'PPT', png: 'PNG', svg: 'SVG' };
+const isPicture = (file: GeneratedFile) => file.format === 'png' || file.format === 'svg';
 const fileSize = (bytes: number) => (bytes < 1_000_000 ? `${Math.max(1, Math.round(bytes / 1000))} KB` : `${(bytes / 1_000_000).toFixed(1)} MB`);
 
 async function copyText(text: string) {
@@ -115,7 +116,16 @@ export const ReplyView = memo(function ReplyView({ reply, onRetry, onOpenDoc }: 
       {reply.sources && reply.content && (
         <Refs label="Sources" refs={reply.sources} none="No document matched this question." onOpen={onOpenDoc} />
       )}
-      {reply.files?.map(file => (
+      {reply.files?.filter(isPicture).map(file => (
+        <figure key={file.id} className="chat-picture">
+          <a href={fileUrl(file.id)} target="_blank" rel="noreferrer" title="Open full size"><img src={fileUrl(file.id)} alt={file.filename} /></a>
+          <figcaption>
+            <span>{FORMAT_NAMES[file.format]} · {fileSize(file.size_bytes)}</span>
+            <a className="btn small" href={fileUrl(file.id)} download={file.filename}><Icon.download />Download</a>
+          </figcaption>
+        </figure>
+      ))}
+      {reply.files?.filter(file => !isPicture(file)).map(file => (
         <div key={file.id} className="file-card" data-format={file.format}>
           <span className="file-badge">{FORMAT_BADGES[file.format]}</span>
           <span className="file-name"><b>{file.filename}</b><small>{FORMAT_NAMES[file.format]} · {fileSize(file.size_bytes)} · made on this machine</small></span>

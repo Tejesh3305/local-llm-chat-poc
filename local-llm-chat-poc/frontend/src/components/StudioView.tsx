@@ -1,8 +1,8 @@
 import { useEffect, useReducer, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from 'react';
-import { exportFile, fetchInsights, fetchOutline, makeImage, saveFile, streamEvents } from '../api';
+import { exportFile, fetchImageEngine, fetchInsights, fetchOutline, makeImage, saveFile, streamEvents } from '../api';
 import { addText, fail, finish, generation, interrupt, newReply } from '../generation';
 import { applyFilter, FILTERS, loadImage, measure, toCanvas, type Filter } from '../imageTools';
-import type { DemoImage, DocumentInfo, DocumentInsights, ExportFormat, ModelInfo, OutlineResponse, Reply, StudioEvent } from '../types';
+import type { DocumentInfo, DocumentInsights, ExportFormat, ImageEngine, ModelInfo, OutlineResponse, Reply, StudioEvent, StudioImage } from '../types';
 import { Icon } from './icons';
 import { ReplyView } from './ReplyView';
 
@@ -316,14 +316,23 @@ function DocumentMaker({ format, hidden, model, models, generating }: { format: 
   );
 }
 
-// ---------- image generation (demo) ----------
+// ---------- image generation ----------
 
-const IMAGE_STYLES = ['terrain map', 'landscape', 'poster'];
+const IMAGE_STYLES = ['landscape', 'terrain map', 'poster'];
 const IMAGE_IDEAS = ['Snow-covered Himalayan ridge at dawn', 'Night patrol route through a forest valley', 'Desert convoy route with checkpoints', 'Winter readiness poster for Sector 4'];
-const STAGES = ['Reading the prompt', 'Composing the scene', 'Rendering'];
+const QUALITY = [
+  { steps: 1, label: 'Fast' },
+  { steps: 2, label: 'Balanced' },
+  { steps: 4, label: 'Detailed' },
+];
 
-async function svgToPng(image: DemoImage): Promise<Blob> {
-  const picture = await loadImage(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(image.svg)}`);
+type Drawn = StudioImage & { prompt: string; key: number };
+
+const imageUrl = (image: StudioImage) => (image.kind === 'model' ? image.image : `data:image/svg+xml;charset=utf-8,${encodeURIComponent(image.svg)}`);
+
+async function toPng(image: StudioImage): Promise<Blob> {
+  if (image.kind === 'model') return (await fetch(image.image)).blob();
+  const picture = await loadImage(imageUrl(image));
   const canvas = document.createElement('canvas');
   canvas.width = image.width;
   canvas.height = image.height;
@@ -331,69 +340,120 @@ async function svgToPng(image: DemoImage): Promise<Blob> {
   return new Promise((resolve, reject) => canvas.toBlob(blob => (blob ? resolve(blob) : reject(new Error('PNG export failed'))), 'image/png'));
 }
 
-function ImageMaker({ hidden }: { hidden: boolean }) {
+function ImageMaker({ hidden, generating }: { hidden: boolean; generating: string | null }) {
+  const [engine, setEngine] = useState<ImageEngine | null>(null);
+  const [useModel, setUseModel] = useState(true);
   const [prompt, setPrompt] = useState(IMAGE_IDEAS[0]);
   const [style, setStyle] = useState('landscape');
-  const [stage, setStage] = useState(-1);
-  const [current, setCurrent] = useState<(DemoImage & { prompt: string }) | null>(null);
-  const [gallery, setGallery] = useState<(DemoImage & { prompt: string })[]>([]);
+  const [steps, setSteps] = useState(2);
+  const [startedAt, setStartedAt] = useState(0);
+  const [, tick] = useReducer((n: number) => n + 1, 0);
+  const [current, setCurrent] = useState<Drawn | null>(null);
+  const [gallery, setGallery] = useState<Drawn[]>([]);
   const [error, setError] = useState('');
+  const drawn = useRef(0);
+  const real = !!engine?.available && useModel;
+  const working = startedAt > 0;
+
+  useEffect(() => {
+    if (!hidden) fetchImageEngine().then(setEngine, () => setEngine(null));
+  }, [hidden]);
+
+  // Show the time spent while the model draws
+  useEffect(() => {
+    if (!working) return;
+    const timer = setInterval(tick, 200);
+    return () => clearInterval(timer);
+  }, [working]);
 
   const generate = async () => {
     setError('');
-    setStage(0);
+    setStartedAt(performance.now());
     try {
-      const request = makeImage(prompt, style);
-      for (let at = 0; at < STAGES.length; at++) {   // a short staged progress, as a real generator would report
-        setStage(at);
-        await sleep(550);
-      }
-      const image = { ...(await request), prompt };
+      const request = makeImage(prompt, style, real ? 'model' : 'demo', steps);
+      if (!real) await sleep(900);   // the demo renderer is instant; a short pause reads as work being done
+      const image: Drawn = { ...(await request), prompt, key: drawn.current++ };
       setCurrent(image);
-      setGallery(list => [image, ...list.filter(entry => entry.svg !== image.svg)].slice(0, 8));
+      setGallery(list => [image, ...list].slice(0, 12));
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'The image could not be made.');
     } finally {
-      setStage(-1);
+      setStartedAt(0);
     }
   };
 
-  const url = (image: DemoImage) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(image.svg)}`;
+  const badge = engine?.available
+    ? <span className="tag model">{engine.model} · on this machine{engine.device ? `'s ${engine.device}` : ''}</span>
+    : <span className="tag" title={engine?.reason}>Demo renderer · no image model installed</span>;
+  const seconds = working ? ((performance.now() - startedAt) / 1000).toFixed(1) : '';
 
   return (
     <div className="flow-col" hidden={hidden}>
-      <Head kicker="Create · Image" title="Image generation" badge={<span className="tag">Demo · drawn by code, no image model</span>}>
-        Turns a short description into a picture. This demo draws terrain maps, landscapes and posters from the prompt's words (snow, night, desert, forest…); a real deployment would plug an image model in here.
+      <Head kicker="Create · Image" title="Image generation" badge={badge}>
+        {engine?.available
+          ? `Turns a short description into a picture with ${engine.model}, a small open image model running on this machine (Powered by Stability AI, Stability AI Community License). Pictures are 512 × 512; detail is modest but each one takes about a second.`
+          : "Turns a short description into a picture. Without an image model installed, this demo draws terrain maps, landscapes and posters from the prompt's words."}
       </Head>
+      {engine && !engine.available && <div className="stale">{engine.reason}</div>}
       <section className="card">
         <textarea className="studio-text" rows={2} value={prompt} maxLength={500} onChange={event => setPrompt(event.target.value)} aria-label="Describe the picture" />
         <div className="studio-row">
           {IMAGE_IDEAS.map(idea => <button key={idea} type="button" className="chip-btn" onClick={() => setPrompt(idea)}>{idea}</button>)}
         </div>
         <div className="studio-row">
-          <div className="seg">
+          <div className="seg" aria-label="Style">
             {IMAGE_STYLES.map(name => <button key={name} type="button" aria-pressed={style === name} onClick={() => setStyle(name)}>{name[0].toUpperCase() + name.slice(1)}</button>)}
           </div>
+          {real && (
+            <div className="seg" aria-label="Quality">
+              {QUALITY.map(entry => <button key={entry.steps} type="button" aria-pressed={steps === entry.steps} title={`${entry.steps} step${entry.steps > 1 ? 's' : ''}`} onClick={() => setSteps(entry.steps)}>{entry.label}</button>)}
+            </div>
+          )}
+          {engine?.available && (
+            <div className="seg" aria-label="Engine">
+              <button type="button" aria-pressed={useModel} onClick={() => setUseModel(true)}>{engine.model}</button>
+              <button type="button" aria-pressed={!useModel} onClick={() => setUseModel(false)}>Demo</button>
+            </div>
+          )}
           <span className="tools-gap" />
-          <button type="button" className="btn primary" disabled={stage >= 0 || prompt.trim().length < 2} onClick={() => void generate()}><Icon.wand />Generate image</button>
+          <button type="button" className="btn primary" disabled={working || prompt.trim().length < 2 || (real && generating !== null)} onClick={() => void generate()}>
+            <Icon.wand />Generate image
+          </button>
         </div>
-        {stage >= 0 && (
+        {working && (
           <div className="progress" aria-live="polite">
-            <div className="progress-bar"><span style={{ width: `${((stage + 1) / STAGES.length) * 100}%` }} /></div>
-            <span className="side-note shimmer">{STAGES[stage]}…</span>
+            <div className="progress-bar indeterminate"><span /></div>
+            <span className="side-note shimmer">{real ? `Drawing with ${engine?.model}… ${seconds} s` : 'Rendering…'}</span>
           </div>
         )}
+        {real && generating !== null && !working && <span className="side-note">Waiting for the current answer to finish: the GPU is shared with the chat model.</span>}
         {error && <span className="studio-error">{error}</span>}
       </section>
       {current && (
         <section className="card">
-          <img className="studio-image" src={url(current)} alt={current.prompt} />
+          <img className="studio-image" src={imageUrl(current)} alt={current.prompt} />
           <div className="studio-row">
-            <span className="tag">{current.style}</span><span className="tag">palette: {current.palette}</span><span className="tag">seed {current.seed}</span>
+            {current.kind === 'model' ? (
+              <>
+                <span className="tag model" title="Stability AI Community License">{current.model} · Powered by Stability AI</span>
+                <span className="tag">{current.style}</span>
+                <span className="tag">{current.steps} step{current.steps > 1 ? 's' : ''} · {current.seconds} s</span>
+                <span className="tag">seed {current.seed}</span>
+              </>
+            ) : (
+              <>
+                <span className="tag">Demo render</span><span className="tag">{current.style}</span><span className="tag">palette: {current.palette}</span>
+              </>
+            )}
             <span className="tools-gap" />
-            <button type="button" className="btn small" onClick={() => saveFile(new Blob([current.svg], { type: 'image/svg+xml' }), `${slug(current.prompt)}.svg`)}><Icon.download />SVG</button>
-            <button type="button" className="btn small" onClick={() => void svgToPng(current).then(blob => saveFile(blob, `${slug(current.prompt)}.png`), (failure: Error) => setError(failure.message))}><Icon.download />PNG</button>
+            {current.kind === 'demo' && (
+              <button type="button" className="btn small" onClick={() => saveFile(new Blob([current.svg], { type: 'image/svg+xml' }), `${slug(current.prompt)}.svg`)}><Icon.download />SVG</button>
+            )}
+            <button type="button" className="btn small" onClick={() => void toPng(current).then(blob => saveFile(blob, `${slug(current.prompt)}.png`), (failure: Error) => setError(failure.message))}>
+              <Icon.download />PNG
+            </button>
           </div>
+          {current.kind === 'model' && <p className="card-note">Prompt sent to the model: {current.prompt_used}</p>}
         </section>
       )}
       {gallery.length > 1 && (
@@ -401,8 +461,8 @@ function ImageMaker({ hidden }: { hidden: boolean }) {
           <div className="cards-head"><h3>This session</h3></div>
           <div className="thumbs">
             {gallery.map(image => (
-              <button key={image.svg.length + image.prompt + image.style} type="button" className="thumb" aria-pressed={image === current} title={image.prompt} onClick={() => setCurrent(image)}>
-                <img src={url(image)} alt="" />
+              <button key={image.key} type="button" className="thumb" aria-pressed={image.key === current?.key} title={image.prompt} onClick={() => setCurrent(image)}>
+                <img src={imageUrl(image)} alt="" />
               </button>
             ))}
           </div>
@@ -644,7 +704,7 @@ export function StudioView(props: Props) {
           {(['pdf', 'docx', 'pptx'] as ExportFormat[]).map(format => (
             <DocumentMaker key={format} format={format} hidden={tool !== format} model={model} models={models} generating={generating} />
           ))}
-          <ImageMaker hidden={tool !== 'image'} />
+          <ImageMaker hidden={tool !== 'image'} generating={generating} />
           <ImageLab hidden={tool !== 'vision'} model={model} models={models} generating={generating} />
           <DocLab {...props} hidden={tool !== 'doclab'} />
         </main>

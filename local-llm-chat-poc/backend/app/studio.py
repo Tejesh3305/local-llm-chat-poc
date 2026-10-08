@@ -41,6 +41,8 @@ FORMATS = {
     "pdf": "application/pdf",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "png": "image/png",  # pictures drawn in the chat
+    "svg": "image/svg+xml",
 }
 
 
@@ -404,7 +406,7 @@ def demo_image(prompt: str, style: str) -> tuple[str, dict]:
             x, y = rng.uniform(80, 940), rng.uniform(80, 560)
             parts.append(f'<rect x="{x - 14:.0f}" y="{y - 9:.0f}" width="28" height="18" fill="{paper}" stroke="#2c5d9c" stroke-width="2.5"/>')
             parts.append(f'<line x1="{x - 14:.0f}" y1="{y - 9:.0f}" x2="{x + 14:.0f}" y2="{y + 9:.0f}" stroke="#2c5d9c" stroke-width="2"/>')
-    elif style == "landscape":
+    elif style in ("landscape", "photo"):  # the demo has no photos; a landscape is the closest it draws
         parts.append(f'<defs><linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="{darkest if name == "night" else mid}"/><stop offset="1" stop-color="{light}"/></linearGradient></defs>')
         parts.append(f'<rect width="{width}" height="{height}" fill="url(#sky)"/>')
         parts.append(f'<circle cx="{rng.uniform(150, 870):.0f}" cy="{rng.uniform(90, 200):.0f}" r="{rng.uniform(30, 55):.0f}" fill="{paper}" fill-opacity=".9"/>')

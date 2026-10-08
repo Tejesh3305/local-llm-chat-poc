@@ -236,18 +236,18 @@ class ModelRegistry:
             raise LLMError("The document text could not be processed. Please try again.") from error
         return [item.embedding for item in sorted(response.data, key=lambda item: item.index)]
 
-    async def activate(self, model: ModelConfig) -> None:
-        """Make `model` the only catalogue model in memory. Call while holding `slot`.
+    async def activate(self, model: ModelConfig | None) -> None:
+        """Make `model` the only catalogue model in memory; None unloads them all. Call while holding `slot`.
 
         Unloads the other models of this catalogue; models loaded by other tools are left alone.
         A runtime that cannot be asked is skipped: the request that follows reports it.
         """
         for provider_id, in_memory in (await self.loaded_models()).items():
             for other in self.config.models:
-                is_target = other.provider == model.provider and other.provider_model == model.provider_model
+                is_target = model is not None and other.provider == model.provider and other.provider_model == model.provider_model
                 if other.provider != provider_id or is_target or _tag(other.provider_model) not in (in_memory or {}):
                     continue
-                logger.info("unloading '%s' to make room for '%s'", other.provider_model, model.provider_model)
+                logger.info("unloading '%s' to make room for '%s'", other.provider_model, model.provider_model if model else "the image model")
                 try:  # a generate call with keep_alive 0 and no prompt only unloads the model
                     payload = {"model": other.provider_model, "keep_alive": 0, "stream": False}
                     await self._http.post(f"{self.native[provider_id]}/api/generate", json=payload, timeout=30)

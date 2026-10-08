@@ -1,6 +1,9 @@
 """FastAPI application: routes for models, chat (streaming), workflows, the corpus, conversations and documents."""
 
+import asyncio
+import base64
 import logging
+import random
 import re
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
@@ -19,6 +22,7 @@ from .config import AUTO_MODEL, BACKEND_DIR, ModelConfig, PromptsFile, get_setti
 from .corpus import Corpus, extracts, reference
 from .documents import SUPPORTED, DocumentError, DocumentLibrary, with_documents, with_excerpts
 from .files import GeneratedFiles
+from .imagegen import ImageGenerator
 from .llm import LLMError, ModelRegistry, ProviderNotConfiguredError, StreamResult, UnknownModelError
 from .router import choose_model
 from .scenario import Scenario, digest, situation
@@ -54,6 +58,8 @@ registry = ModelRegistry(
 store = ConversationStore(settings.database_path)
 library = DocumentLibrary(settings.database_path)
 files = GeneratedFiles(settings.files_path)
+images = ImageGenerator(str(BACKEND_DIR / settings.image_model_dir))
+images.warm_up()
 
 # Workflow data. All of it is sample data for the exercise scenario; see data/*.json.
 base_scenario: Scenario = load_data_file(settings.data_dir, "scenario.json")
@@ -98,6 +104,10 @@ def get_library() -> DocumentLibrary:
 
 def get_files() -> GeneratedFiles:
     return files
+
+
+def get_images() -> ImageGenerator:
+    return images
 
 
 def resolve_model(registry: ModelRegistry, model_id: str) -> ModelConfig:
@@ -228,12 +238,14 @@ class ChatContext:
     system: str | None = None  # replaces the model's own system prompt when Corpus is on
     sources: list[dict] | None = None  # the documents found, when Corpus is on
     file: actions.FileRequest | None = None  # the message asks for a PDF, Word or PowerPoint file
+    picture: actions.PictureRequest | None = None  # the message asks for a picture
 
 
 async def prepare_chat(
     body: ChatRequest,
     registry: ModelRegistry = Depends(get_registry),
     store: ConversationStore = Depends(get_store),
+    library: DocumentLibrary = Depends(get_library),
 ) -> ChatContext:
     """Runs BEFORE streaming starts, so validation errors become normal 4xx JSON responses."""
     if len(body.message) > settings.max_message_chars:
@@ -268,6 +280,15 @@ async def prepare_chat(
     )
     if not body.grounded:
         context.file = actions.file_request(body.message)
+        context.picture = None if context.file else actions.picture_request(body.message)
+        if not (context.file or context.picture) and conversation and actions.REPEAT.match(body.message):
+            # "try again" after a picture or file request repeats that request
+            previous = next((m for m in reversed(conversation.messages) if m.role == "user"), None)
+            if previous:
+                context.picture = actions.picture_request(previous.content)
+                context.file = None if context.picture else actions.file_request(previous.content)
+                if context.file and previous.documents:  # with the documents picked for it
+                    context.document_ids = [doc.id for doc in library.documents() if doc.filename in previous.documents] or None
 
     if body.grounded:
         scenario = scenario_for(body.inputs)
@@ -288,10 +309,15 @@ async def chat(
     store: ConversationStore = Depends(get_store),
     library: DocumentLibrary = Depends(get_library),
     files: GeneratedFiles = Depends(get_files),
+    images: ImageGenerator = Depends(get_images),
 ) -> AsyncIterable[dict]:
     """Streams Server-Sent Events: start -> (excerpts) -> delta... -> (file) -> done (or error)."""
     if ctx.file:
         async for event in file_turn(ctx, registry, store, library, files):
+            yield event
+        return
+    if ctx.picture:
+        async for event in picture_turn(ctx, registry, store, files, images):
             yield event
         return
 
@@ -356,19 +382,15 @@ def picked_texts(ctx: ChatContext, library: DocumentLibrary) -> list[tuple[str, 
 
 
 def file_sources(ctx: ChatContext, library: DocumentLibrary) -> list[tuple[str, str, str]]:
-    """The documents a file request is about: picked with @, else all with Documents on, else the ones the
-    message refers to ("the given doc"): those picked earlier in this chat, or the only uploaded document."""
+    """The documents a file request is about: only those picked with @ (or, for API callers, use_documents).
+
+    Never guessed from words like "it" or "the given doc": the user always knows what the model reads.
+    """
     if ctx.document_ids:
         return picked_texts(ctx, library)
-    documents = library.documents()
     if ctx.use_documents:
-        chosen = documents[:3]
-    elif ctx.file and ctx.file.mentions_document:
-        earlier = next((m.documents for m in reversed(ctx.conversation.messages) if m.role == "user" and m.documents), [])
-        chosen = [doc for doc in documents if doc.filename in earlier] or (documents if len(documents) == 1 else [])
-    else:
-        chosen = []
-    return [(doc.id, doc.filename, library.text(doc.id) or "") for doc in chosen]
+        return [(doc.id, doc.filename, library.text(doc.id) or "") for doc in library.documents()[:3]]
+    return []
 
 
 async def file_turn(
@@ -388,6 +410,19 @@ async def file_turn(
         default_title = actions.stem(sources[0][1])
     elif request.mentions_answer and earlier:
         name, text, default_title = "the previous answer", earlier, "Chat answer"
+    elif request.mentions_document:
+        # "Convert the given doc", but no document was picked: ask, instead of guessing which one
+        first = next(iter(library.documents()), None)
+        tip = (
+            "Which document should I use? Type **@** in the message box and pick it, then ask again, for example: "
+            f"*@{first.filename if first else 'report.pdf'} {ctx.message}*. "
+            "I only read a document when you pick it with @."
+        )
+        yield {"type": "start", "conversation_id": ctx.conversation.id, "model": ctx.model.id}
+        yield {"type": "delta", "text": tip}
+        store.add_turn(ctx.conversation, Message(role="user", content=ctx.message), Message(role="assistant", content=tip, model=ctx.model.id))
+        yield {"type": "done", **stats(StreamResult())}
+        return
     else:
         name, text, default_title = None, None, ""
     copy = request.as_is and bool(text)
@@ -450,6 +485,50 @@ async def file_turn(
         Message(role="assistant", content=reply, model=ctx.model.id, route_reason=ctx.route_reason,
                 excerpts=[Source(document_id=d, filename=f, position=0, text=b[:400], score=1.0) for d, f, b in sources],
                 stats=stats(result), files=[made]),
+    )
+    yield {"type": "done", **stats(result)}
+
+
+async def picture_turn(
+    ctx: ChatContext, registry: ModelRegistry, store: ConversationStore, files: GeneratedFiles, images: ImageGenerator
+) -> AsyncIterable[dict]:
+    """A chat message that asks for a picture: drawn by the image model, or by the demo renderer without one."""
+    request = ctx.picture
+    engine = images.status()
+    real = engine["available"]
+    label = f"Drawing with {engine['model']}" if real else "Drawing a demo picture"
+    yield {"type": "start", "conversation_id": ctx.conversation.id, "model": ctx.model.id, "action": {"type": "image", "label": label}}
+
+    name = studio.filename(request.subject[:50] or "picture", "png" if real else "svg")
+    result = StreamResult()
+    if real:
+        seed = random.randint(0, 2**31 - 1)
+        try:
+            async with registry.slot:  # the GPU is shared: the chat model is unloaded to make room
+                await registry.activate(None)
+                png, details = await asyncio.to_thread(images.generate, request.subject, request.style, seed, 2)
+        except Exception as error:
+            logger.exception("image generation in the chat failed")
+            yield {"type": "error", "message": f"The image model could not draw the picture: {error}"}
+            return
+        made = files.save(png, name, "png")
+        reply = (
+            f"Here is a picture of **{request.subject}**, drawn by {engine['model']} on this machine in {details['seconds']} s "
+            f"(Powered by Stability AI). It is a small model, so details may be imperfect; ask again for a different version."
+        )
+    else:
+        svg, _ = studio.demo_image(request.subject, "landscape" if request.style == "photo" else request.style)
+        made = files.save(svg.encode(), name, "svg")
+        reply = (
+            f"No image model is installed, so this is a **demo drawing** for \"{request.subject}\", not a real picture. "
+            f"{engine['reason']}"
+        )
+    yield {"type": "delta", "text": reply}
+    yield {"type": "file", "file": made}
+    store.add_turn(
+        ctx.conversation,
+        Message(role="user", content=ctx.message),
+        Message(role="assistant", content=reply, model=ctx.model.id, stats=stats(result), files=[made]),
     )
     yield {"type": "done", **stats(result)}
 
@@ -709,11 +788,30 @@ def studio_outline(body: ExportRequest):
     return {**document.as_dict(), "slides": studio.slides(document), "filename": studio.filename(document.title, body.format)}
 
 
+@app.get("/api/studio/image-engine")
+def image_engine(images: ImageGenerator = Depends(get_images)):
+    """Whether pictures come from the image model (SD-Turbo) or the demo renderer, and why."""
+    return images.status()
+
+
 @app.post("/api/studio/image")
-def studio_image(body: ImageRequest):
-    """A demo picture drawn from the prompt's words. Not a generative model, and labelled as such."""
+async def studio_image(body: ImageRequest, registry: ModelRegistry = Depends(get_registry), images: ImageGenerator = Depends(get_images)):
+    """A picture from the prompt: drawn by SD-Turbo when it is installed, else by the demo renderer (labelled as such)."""
+    if body.engine == "model" or (body.engine == "auto" and images.status()["available"]):
+        if not images.status()["available"]:
+            raise HTTPException(503, images.status()["reason"])
+        seed = body.seed if body.seed is not None else random.randint(0, 2**31 - 1)
+        try:
+            async with registry.slot:  # the GPU is shared: no chat answer while drawing
+                await registry.activate(None)  # unload the chat model to make room
+                png, details = await asyncio.to_thread(images.generate, body.prompt, body.style, seed, body.steps)
+        except Exception as error:  # out of GPU memory, damaged model files...
+            logger.exception("image generation failed")
+            raise HTTPException(500, f"The image model could not draw the picture: {error}")
+        image = "data:image/png;base64," + base64.b64encode(png).decode()
+        return {"kind": "model", "image": image, "model": images.status()["model"], "style": body.style, **details}
     svg, details = studio.demo_image(body.prompt, body.style)
-    return {"svg": svg, **details}
+    return {"kind": "demo", "svg": svg, **details}
 
 
 def prepare_image_analysis(body: ImageAnalysisRequest, registry: ModelRegistry = Depends(get_registry)) -> StudioJob:

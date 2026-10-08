@@ -148,7 +148,11 @@ class ExportRequest(BaseModel):
 
 class ImageRequest(BaseModel):
     prompt: str = Field(min_length=2, max_length=500)
-    style: Literal["terrain map", "landscape", "poster"] = "landscape"
+    style: Literal["photo", "terrain map", "landscape", "poster"] = "landscape"
+    # "auto": the image model when it is installed, else the demo renderer
+    engine: Literal["auto", "model", "demo"] = "auto"
+    steps: int = Field(default=2, ge=1, le=4)  # SD-Turbo: 1 is fastest, 4 a little sharper
+    seed: int | None = Field(default=None, ge=0, le=2**31 - 1)  # same seed and prompt, same picture
 
 
 class ImageAnalysisRequest(BaseModel):

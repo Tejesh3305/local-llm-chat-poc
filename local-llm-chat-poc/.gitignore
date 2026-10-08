@@ -9,6 +9,8 @@ dist/
 
 # Saved chats and uploaded documents
 backend/storage/
+# Downloaded model files (scripts/get_image_model.py)
+backend/models/
 
 # Secrets / local config
 .env

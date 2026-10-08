@@ -35,11 +35,10 @@ interface Props {
   onOpenChat: (id: string) => void;
   onRenameChat: (id: string, title: string) => void;
   onDeleteChat: (id: string) => void;
+  onNewChat: () => void;
   // uploaded documents
   documents: DocumentInfo[];
-  useDocuments: boolean;
   uploading: boolean;
-  onToggleDocuments: () => void;
   onUpload: (file: File) => void;
   onDeleteDocument: (id: string) => void;
 }
@@ -60,6 +59,9 @@ function ChatRail(props: Props) {
   };
   return (
     <aside className="flow-rail chat-rail" aria-label="Saved chats and documents">
+      <button type="button" className="btn primary rail-new" onClick={props.onNewChat} title="Start a new chat (Ctrl+Shift+O)">
+        <Icon.plus /><span>New chat</span>
+      </button>
       <div className="rail-title">Chats</div>
       {props.conversations.length === 0 && <p className="rail-empty">No saved chats yet. A chat is saved after its first reply.</p>}
       {props.conversations.map(chat => (
@@ -97,7 +99,6 @@ function ChatRail(props: Props) {
 
 export function ChatView(props: Props) {
   const { hidden, items, version, model, generating, status, corpus, scenario, auto, thinking, documents, uploading } = props;
-  const useDocuments = props.useDocuments && documents.length > 0;
   const [text, setText] = useState('');
   // Documents picked with @ for the next question, and the @ menu while it is open
   const [picked, setPicked] = useState<Picked>([]);
@@ -256,8 +257,8 @@ export function ChatView(props: Props) {
   const name = auto ? 'the AI' : model?.label ?? 'the model';
   const emptySub = corpus
     ? `The model answers from ${scenario?.name ?? 'the scenario'} and ${props.corpusCount} sample documents, and lists its sources.`
-    : useDocuments
-      ? `The model answers from your ${documents.length === 1 ? 'uploaded document' : `${documents.length} uploaded documents`} and shows the parts it used.`
+    : documents.length
+      ? 'Answers come from a model running on this machine. To ask about your documents, type @ and pick them; nothing else is read.'
       : model && !model.local
         ? `Answers come from ${model.provider_name} on another machine.`
         : 'Answers come from a model running on this machine. No internet is used.';
@@ -326,13 +327,6 @@ export function ChatView(props: Props) {
               title="Answer from the scenario and its sample documents, with sources" onClick={props.onToggleCorpus}
             >
               <Icon.book /><span>Corpus</span>
-            </button>
-            <button
-              id="documentsBtn" className="tool" type="button" aria-pressed={useDocuments} disabled={documents.length === 0}
-              title={documents.length ? 'Answer from the uploaded documents and show the parts used' : 'Attach a document first'}
-              onClick={props.onToggleDocuments}
-            >
-              <Icon.file /><span>Documents{documents.length ? ` (${documents.length})` : ''}</span>
             </button>
             {thinking !== undefined && (
               <button

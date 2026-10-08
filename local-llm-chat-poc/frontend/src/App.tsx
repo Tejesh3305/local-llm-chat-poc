@@ -67,7 +67,6 @@ export function App() {
   const [thinkChoice, setThinkChoice] = useState<boolean | null>(null);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [documents, setDocuments] = useState<DocumentInfo[]>([]);
-  const [useDocuments, setUseDocuments] = useState(false);
   const [uploading, setUploading] = useState(false);
   // Problems with the saved chats and the documents; the engine has its own banner.
   const [notice, setNotice] = useState('');
@@ -131,7 +130,7 @@ export function App() {
 
   const flows = useWorkflows(selected, refresh);
   const chat = useChat({
-    model: selected, auto, models, thinking, corpus, documents: useDocuments && documents.length > 0, inputs: flows.inputs, onSettled: chatSettled,
+    model: selected, auto, models, thinking, corpus, inputs: flows.inputs, onSettled: chatSettled,
   });
 
   const selectModel = (id: string) => {
@@ -144,7 +143,6 @@ export function App() {
     setNotice('');
     try {
       await uploadDocument(file);
-      setUseDocuments(true);   // a file was just added, so the next question is most likely about it
       await refreshDocuments();
     } catch (error) {
       fail(error);
@@ -187,9 +185,19 @@ export function App() {
     try { localStorage.setItem('sainik-theme', theme); } catch { /* storage unavailable */ }
   }, [theme]);
 
+  const newChatRef = useRef(chat.newChat);
+  newChatRef.current = chat.newChat;
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !document.querySelector('dialog[open]') && generation.owner) generation.stop();
+      // Ctrl+Shift+O: a new chat, from any view
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'o') {
+        event.preventDefault();
+        newChatRef.current();
+        setView('chat');
+        history.replaceState(null, '', location.pathname + location.search);
+      }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -247,8 +255,8 @@ export function App() {
         onOpenChat={id => void chat.open(id).catch(fail)}
         onRenameChat={(id, title) => void renameConversation(id, title).then(refreshConversations, fail)}
         onDeleteChat={id => void removeConversation(id)}
-        documents={documents} useDocuments={useDocuments} uploading={uploading}
-        onToggleDocuments={() => setUseDocuments(on => !on)} onUpload={file => void upload(file)}
+        onNewChat={chat.newChat}
+        documents={documents} uploading={uploading} onUpload={file => void upload(file)}
         onDeleteDocument={id => void deleteDocument(id).then(refreshDocuments, fail)}
       />
       <WorkflowsView hidden={view !== 'flows'} flows={flows} model={selected} generating={generating} onOpenDoc={setDoc} onBrowse={() => setDoc('')} />

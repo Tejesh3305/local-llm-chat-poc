@@ -1,0 +1,13 @@
+# Optional: real image generation in AI Studio (SD-Turbo on an NVIDIA GPU).
+# Install after requirements.txt, while online:
+#   pip install -r requirements-images.txt
+#   python scripts/get_image_model.py
+# Without these, AI Studio draws its demo pictures instead.
+
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.11.0
+diffusers==0.41.0
+transformers==5.19.0
+accelerate==1.15.0
+huggingface_hub==1.33.0
+safetensors==0.8.0

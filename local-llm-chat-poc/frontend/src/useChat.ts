@@ -8,7 +8,7 @@ export type Picked = Pick<DocumentInfo, 'id' | 'filename'>[];
 
 export type ChatItem =
   | { kind: 'user'; id: number; text: string; documents: string[] }
-  | { kind: 'reply'; id: number; reply: Reply; question: string; grounded: boolean; documents: boolean; picked: Picked }
+  | { kind: 'reply'; id: number; reply: Reply; question: string; grounded: boolean; picked: Picked }
   | { kind: 'switch'; id: number; model: ModelInfo };
 
 interface Options {
@@ -17,7 +17,7 @@ interface Options {
   models: ModelInfo[];
   thinking: boolean | undefined; // undefined: use the model's default
   corpus: boolean; // answer from the scenario and its documents
-  documents: boolean; // answer from the uploaded documents
+  // Uploaded documents are read only when picked with @ for a message (see send)
   inputs: Inputs; // workflow input values, so Corpus answers see the same scenario as the workflows
   onSettled: () => void; // a reply ended, one way or another
 }
@@ -42,11 +42,11 @@ export function useChat(options: Options) {
     });
   }, []);
 
-  const generate = useCallback(async (question: string, grounded: boolean, documents: boolean, picked: Picked) => {
+  const generate = useCallback(async (question: string, grounded: boolean, picked: Picked) => {
     const { model, auto, thinking, inputs, onSettled } = latest.current;
     if (!model || generation.owner) return;
     const reply = newReply(model);
-    const item: ChatItem = { kind: 'reply', id: nextId.current++, reply, question, grounded, documents, picked };
+    const item: ChatItem = { kind: 'reply', id: nextId.current++, reply, question, grounded, picked };
     items.current = [...items.current, item];
     const controller = generation.begin('chat');
     bump();
@@ -55,7 +55,7 @@ export function useChat(options: Options) {
       const body = {
         message: question, model: auto ? AUTO : model.id, conversation_id: conversationId.current,
         grounded, inputs: grounded ? inputs : {}, thinking: auto ? undefined : thinking,
-        use_documents: documents || picked.length > 0, document_ids: picked.map(doc => doc.id),
+        document_ids: picked.map(doc => doc.id),
       };
       for await (const event of streamEvents<ChatEvent>('/api/chat', body, controller.signal)) {
         if (event.type === 'start') {
@@ -109,14 +109,14 @@ export function useChat(options: Options) {
     const last = items.current.at(-1);
     if (last?.kind === 'reply' && last.reply.status === 'error' && !last.reply.content) items.current = items.current.slice(0, -1);
     items.current = [...items.current, { kind: 'user', id: nextId.current++, text: question, documents: picked.map(doc => doc.filename) }];
-    void generate(question, latest.current.corpus, latest.current.documents, picked);
+    void generate(question, latest.current.corpus, picked);
   }, [generate]);
 
   /** Run the failed reply's question again, with the model selected now and the same documents. */
   const retry = useCallback((item: ChatItem) => {
     if (item.kind !== 'reply' || generation.owner) return;
     items.current = items.current.filter(entry => entry !== item);
-    void generate(item.question, item.grounded, item.documents, item.picked);
+    void generate(item.question, item.grounded, item.picked);
   }, [generate]);
 
   const newChat = useCallback(() => {
@@ -142,7 +142,9 @@ export function useChat(options: Options) {
         // A model that has since left the catalogue is shown under its id
         const author = models.find(entry => entry.id === message.model) ?? { ...model, id: message.model ?? model.id, label: message.model ?? model.label, vendor: '' };
         const reply = storedReply(author, message);
-        list.push({ kind: 'reply', id: nextId.current++, reply, question, grounded: message.grounded, documents: message.excerpts.length > 0, picked: [] });
+        // The documents the reply used were the ones picked with @; Retry uses them again
+        const picked = [...new Map(message.excerpts.map(excerpt => [excerpt.document_id, { id: excerpt.document_id, filename: excerpt.filename }])).values()];
+        list.push({ kind: 'reply', id: nextId.current++, reply, question, grounded: message.grounded, picked });
       }
     }
     conversationId.current = conversation.id;

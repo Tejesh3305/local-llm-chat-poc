@@ -536,6 +536,7 @@ td[data-tone] { font-weight: 650; }
 /* ---------- chat: saved chats and uploaded documents ---------- */
 .view.chat { display: grid; grid-template-columns: 15rem minmax(0, 1fr); }
 .chat-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.rail-new { justify-content: center; width: calc(100% - .4rem); margin: 0 .2rem .9rem; padding: .5rem .8rem; }
 .rail-gap { margin-top: 1.2rem; padding-top: 1rem; border-top: 1px solid var(--line); }
 .rail-empty { margin: 0; padding: 0 .6rem; color: var(--ink-3); font-size: .82rem; line-height: 1.45; }
 .rail-row { display: flex; align-items: center; gap: .1rem; border-radius: var(--pill); transition: background .12s; }
@@ -568,6 +569,11 @@ td[data-tone] { font-weight: 650; }
 .file-name small { color: var(--ink-3); font-size: .8rem; }
 a.btn { color: inherit; text-decoration: none; }
 a.btn.primary { color: var(--on-brand); }
+
+/* a picture drawn in the chat */
+.chat-picture { display: grid; gap: .35rem; width: min(100%, 26rem); margin: .7rem 0 0; }
+.chat-picture img { display: block; width: 100%; border: 1px solid var(--line-strong); border-radius: var(--pill); background: var(--surface-2); }
+.chat-picture figcaption { display: flex; align-items: center; justify-content: space-between; gap: .6rem; color: var(--ink-3); font-size: .8rem; }
 
 /* documents picked with @ */
 .composer { position: relative; }
@@ -627,6 +633,9 @@ a.btn.primary { color: var(--on-brand); }
 .progress { display: flex; align-items: center; gap: .8rem; }
 .progress-bar { flex: 1; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
 .progress-bar span { display: block; height: 100%; background: var(--brand); transition: width .5s ease-out; }
+.progress-bar.indeterminate span { width: 35%; animation: sweep 1.2s ease-in-out infinite; }
+@keyframes sweep { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+.studio-image { max-width: 640px; image-rendering: auto; }
 
 .studio-image { display: block; width: 100%; border: 1px solid var(--line); border-radius: var(--pill); }
 .thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr)); gap: .5rem; }
